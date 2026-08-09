@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import catalog, dart
+from . import attachments, catalog, dart, extract
 
 mcp = MCPServer("mydart")
 
@@ -138,6 +138,86 @@ def get_disclosure_document(rcept_no: str, max_chars: int = 20000, offset: int =
     end = offset + len(chunk)
     return {
         "rcept_no": rcept_no,
+        "total_chars": len(text),
+        "offset": offset,
+        "truncated": end < len(text),
+        "next_offset": end if end < len(text) else None,
+        "text": chunk,
+    }
+
+
+@mcp.tool()
+def list_attachments(rcept_no: str) -> dict[str, Any]:
+    """공시에 딸린 첨부파일 목록을 본다.
+
+    감사보고서, 외부평가기관 의견서, 계약서처럼 정작 중요한 내용은 본문이 아니라
+    첨부에 있는 경우가 많다. 여기서 파일을 고른 뒤 read_attachment로 읽는다.
+
+    첨부는 OpenDART 오픈API가 아니라 DART 뷰어를 통해 가져온다. 사용자가 지목한
+    공시 하나에만 쓰고, 공시 목록을 돌며 첨부를 긁어모으는 데 쓰지 않는다.
+
+    Args:
+        rcept_no: 접수번호 14자리. search_disclosures 결과의 rcept_no.
+    """
+    return attachments.list_attachments(rcept_no)
+
+
+@mcp.tool()
+def read_attachment(
+    rcept_no: str,
+    filename: str | None = None,
+    index: int | None = None,
+    max_chars: int = 20000,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """공시 첨부파일 하나를 내려받아 텍스트로 읽는다 (HWP, HWPX, PDF, 텍스트).
+
+    긴 문서는 잘라서 반환한다. truncated가 True면 next_offset으로 다시 호출해 이어 읽는다.
+
+    Args:
+        rcept_no: 접수번호 14자리.
+        filename: 읽을 파일명. list_attachments의 filename과 부분일치도 된다.
+        index: 파일명 대신 목록의 index로 지정 (filename이 우선).
+        max_chars: 이번 호출에서 반환할 최대 글자 수.
+        offset: 읽기 시작할 위치.
+    """
+    listed = attachments.list_attachments(rcept_no)
+    files = listed["attachments"]
+    if not files:
+        raise attachments.AttachmentError(
+            listed.get("note") or f"공시 {rcept_no}에 첨부파일이 없습니다."
+        )
+
+    if filename:
+        matches = [f for f in files if f["filename"] == filename] or [
+            f for f in files if filename in f["filename"]
+        ]
+        if not matches:
+            raise attachments.AttachmentError(
+                f"'{filename}'과 맞는 첨부가 없습니다. "
+                f"목록: {', '.join(f['filename'] for f in files)}"
+            )
+        if len(matches) > 1:
+            raise attachments.AttachmentError(
+                f"'{filename}'에 여러 파일이 걸립니다: {', '.join(f['filename'] for f in matches)}"
+            )
+        target = matches[0]
+    elif index is not None:
+        if not 0 <= index < len(files):
+            raise attachments.AttachmentError(
+                f"index는 0~{len(files) - 1} 범위여야 합니다 (첨부 {len(files)}개)."
+            )
+        target = files[index]
+    else:
+        raise attachments.AttachmentError("filename 또는 index 중 하나는 지정해야 합니다.")
+
+    text = extract.extract(attachments.download(target["download_url"]), target["format"])
+    chunk = text[offset : offset + max_chars]
+    end = offset + len(chunk)
+    return {
+        "rcept_no": rcept_no,
+        "filename": target["filename"],
+        "format": target["format"],
         "total_chars": len(text),
         "offset": offset,
         "truncated": end < len(text),
