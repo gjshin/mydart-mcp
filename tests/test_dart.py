@@ -3,7 +3,7 @@ import zipfile
 
 import pytest
 
-from mydart_mcp import dart
+from mydart_mcp import catalog, dart, server
 from mydart_mcp.server import _num
 
 CORP_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -106,6 +106,76 @@ def test_get_zip_returns_members(monkeypatch):
         archive.writestr("CORPCODE.xml", CORP_XML)
     monkeypatch.setattr(dart.httpx, "get", lambda *a, **k: _FakeResponse(content=buffer.getvalue()))
     assert dart.get_zip("corpCode.xml")["CORPCODE.xml"] == CORP_XML
+
+
+def test_catalog_covers_all_83_open_apis():
+    assert len(catalog.ENDPOINTS) == 83
+    counts = {name: len(catalog.by_category(name)) for name in catalog.CATEGORY_NAMES}
+    assert counts == {
+        "disclosure": 4,
+        "periodic_report": 28,
+        "finance": 7,
+        "shareholding": 2,
+        "major_event": 36,
+        "securities_registration": 6,
+    }
+
+
+def test_catalog_ids_match_dict_keys():
+    for key, endpoint in catalog.ENDPOINTS.items():
+        assert key == endpoint.id
+
+
+def test_resolve_by_exact_name_and_id():
+    assert catalog.resolve("periodic_report", "배당에 관한 사항").id == "alotMatter"
+    assert catalog.resolve("major_event", "tsstkAqDecsn").name == "자기주식 취득 결정"
+
+
+def test_resolve_by_partial_name():
+    assert catalog.resolve("periodic_report", "소액주주").id == "mrhlSttus"
+
+
+def test_resolve_rejects_ambiguous_and_unknown():
+    with pytest.raises(ValueError, match="여러 개"):
+        catalog.resolve("major_event", "발행결정")
+    with pytest.raises(ValueError, match="없는 항목"):
+        catalog.resolve("periodic_report", "임원 소유주식")  # 지분공시 소속이다
+
+
+def test_resolve_is_scoped_to_category():
+    with pytest.raises(ValueError):
+        catalog.resolve("periodic_report", "tsstkAqDecsn")
+
+
+def test_call_dart_api_rejects_unknown_and_non_json(monkeypatch):
+    monkeypatch.setenv("DART_API_KEY", "test-key")
+    with pytest.raises(dart.DartError, match="엔드포인트가 아닙니다"):
+        server.call_dart_api("nopeApi", {})
+    with pytest.raises(dart.DartError, match="ZIP/XML"):
+        server.call_dart_api("document", {"rcept_no": "20240101000001"})
+
+
+def test_financial_indicators_rejects_bad_index_code():
+    with pytest.raises(dart.DartError, match="알 수 없는 지표"):
+        server.get_financial_indicators(["00126380"], "2024", "M999999")
+    with pytest.raises(dart.DartError, match="corp_codes"):
+        server.get_financial_indicators([], "2024", "수익성지표")
+
+
+def test_list_dart_apis_filters():
+    assert server.list_dart_apis()["count"] == 83
+    assert server.list_dart_apis(category="shareholding")["count"] == 2
+    names = [api["name"] for api in server.list_dart_apis(query="자기주식")["apis"]]
+    assert "자기주식 취득 및 처분 현황" in names
+    with pytest.raises(dart.DartError, match="알 수 없는 카테고리"):
+        server.list_dart_apis(category="nope")
+
+
+def test_grouped_tool_descriptions_list_every_item():
+    for category in ("periodic_report", "major_event", "securities_registration", "shareholding"):
+        listed = catalog.item_names(category)
+        for endpoint in catalog.by_category(category):
+            assert endpoint.name in listed
 
 
 class _FakeResponse:

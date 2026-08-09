@@ -6,9 +6,18 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import dart
+from . import catalog, dart
 
 mcp = MCPServer("mydart")
+
+# 재무지표 구분 코드
+IDX_CL_CODES = {
+    "M210000": "수익성지표",
+    "M220000": "안정성지표",
+    "M230000": "성장성지표",
+    "M240000": "활동성지표",
+}
+IDX_CL_ALIASES = {name: code for code, name in IDX_CL_CODES.items()}
 
 
 def _num(value: str | None) -> int | None:
@@ -18,6 +27,16 @@ def _num(value: str | None) -> int | None:
         return int(value.replace(",", "").replace(" ", ""))
     except ValueError:
         return None
+
+
+def _with_items(description: str, category: str) -> str:
+    """도구 설명 끝에 해당 카테고리의 항목명을 붙인다 (카탈로그와 항상 일치)."""
+    return f"{description}\n\n사용 가능한 item ({len(catalog.by_category(category))}개): {catalog.item_names(category)}"
+
+
+def _rows(endpoint: catalog.Endpoint, data: dict[str, Any]) -> dict[str, Any]:
+    rows = data.get("list", [])
+    return {"item": endpoint.name, "endpoint": endpoint.id, "count": len(rows), "rows": rows}
 
 
 @mcp.tool()
@@ -219,6 +238,205 @@ def compare_financials(
         "reprt_code": reprt_code,
         "companies": list(companies.values()),
     }
+
+
+_PERIODIC_DESC = _with_items(
+    """정기보고서(사업·반기·분기보고서)에 실린 항목별 상세 정보를 조회한다.
+지분구조, 임원·직원, 보수, 감사인, 미상환 채권 잔액, 자금 사용내역 등을 다룬다.
+
+Args:
+    corp_code: DART 고유번호 8자리. search_company로 먼저 찾는다.
+    bsns_year: 사업연도 4자리 (2015년 이후).
+    item: 아래 항목명 중 하나 (한글명 또는 엔드포인트 id).
+    reprt_code: 11011=사업보고서, 11012=반기, 11013=1분기, 11014=3분기.""",
+    "periodic_report",
+)
+
+
+@mcp.tool(description=_PERIODIC_DESC)
+def get_periodic_report_item(
+    corp_code: str,
+    bsns_year: str,
+    item: str,
+    reprt_code: str = "11011",
+) -> dict[str, Any]:
+    endpoint = catalog.resolve("periodic_report", item)
+    data = dart.get_json(
+        f"{endpoint.id}.json",
+        corp_code=corp_code,
+        bsns_year=bsns_year,
+        reprt_code=dart.normalize_reprt_code(reprt_code),
+    )
+    return _rows(endpoint, data)
+
+
+_MAJOR_EVENT_DESC = _with_items(
+    """주요사항보고서 항목별 상세 정보를 조회한다.
+증자·감자, 합병·분할, 사채 발행, 자기주식 취득·처분, 영업 양수도, 소송, 부도·회생 등
+회사에 중대한 영향을 주는 결정과 사건을 다룬다.
+
+Args:
+    corp_code: DART 고유번호 8자리.
+    item: 아래 항목명 중 하나 (한글명 또는 엔드포인트 id).
+    bgn_de: 검색 시작 접수일자 YYYYMMDD (2015년 이후).
+    end_de: 검색 종료 접수일자 YYYYMMDD.""",
+    "major_event",
+)
+
+
+@mcp.tool(description=_MAJOR_EVENT_DESC)
+def get_major_event(corp_code: str, item: str, bgn_de: str, end_de: str) -> dict[str, Any]:
+    endpoint = catalog.resolve("major_event", item)
+    data = dart.get_json(f"{endpoint.id}.json", corp_code=corp_code, bgn_de=bgn_de, end_de=end_de)
+    return _rows(endpoint, data)
+
+
+_REGISTRATION_DESC = _with_items(
+    """증권신고서 항목별 요약 정보를 조회한다. 공모 발행 조건과 일정을 확인할 때 쓴다.
+
+Args:
+    corp_code: DART 고유번호 8자리.
+    item: 아래 항목명 중 하나 (한글명 또는 엔드포인트 id).
+    bgn_de: 검색 시작 접수일자 YYYYMMDD (2015년 이후).
+    end_de: 검색 종료 접수일자 YYYYMMDD.""",
+    "securities_registration",
+)
+
+
+@mcp.tool(description=_REGISTRATION_DESC)
+def get_securities_registration(
+    corp_code: str, item: str, bgn_de: str, end_de: str
+) -> dict[str, Any]:
+    endpoint = catalog.resolve("securities_registration", item)
+    data = dart.get_json(f"{endpoint.id}.json", corp_code=corp_code, bgn_de=bgn_de, end_de=end_de)
+    return _rows(endpoint, data)
+
+
+_SHAREHOLDING_DESC = _with_items(
+    """지분공시를 조회한다. 5% 이상 대량보유 변동과 임원·주요주주의 소유주식 변동을 다룬다.
+
+Args:
+    corp_code: DART 고유번호 8자리.
+    item: 아래 항목명 중 하나 (한글명 또는 엔드포인트 id).""",
+    "shareholding",
+)
+
+
+@mcp.tool(description=_SHAREHOLDING_DESC)
+def get_shareholding(corp_code: str, item: str) -> dict[str, Any]:
+    endpoint = catalog.resolve("shareholding", item)
+    data = dart.get_json(f"{endpoint.id}.json", corp_code=corp_code)
+    return _rows(endpoint, data)
+
+
+@mcp.tool()
+def get_financial_indicators(
+    corp_codes: list[str],
+    bsns_year: str,
+    idx_cl_code: str,
+    reprt_code: str = "11011",
+) -> dict[str, Any]:
+    """상장사 주요 재무지표(수익성·안정성·성장성·활동성)를 조회한다.
+
+    재무제표 계정 원본이 아니라 OpenDART가 계산해 둔 비율 지표다.
+
+    Args:
+        corp_codes: DART 고유번호 목록. 1개면 단일회사, 2개 이상이면 다중회사로 조회한다.
+        bsns_year: 사업연도 4자리 (2023년 이후 제공).
+        idx_cl_code: 수익성지표(M210000), 안정성지표(M220000), 성장성지표(M230000),
+            활동성지표(M240000). 한글명으로 넣어도 된다.
+        reprt_code: 11011=사업보고서, 11012=반기, 11013=1분기, 11014=3분기.
+    """
+    if not corp_codes:
+        raise dart.DartError("corp_codes가 비어 있습니다.")
+    code = IDX_CL_ALIASES.get(idx_cl_code.strip(), idx_cl_code.strip().upper())
+    if code not in IDX_CL_CODES:
+        raise dart.DartError(
+            f"알 수 없는 지표 구분입니다: {idx_cl_code} "
+            f"(사용 가능: {', '.join(f'{n}({c})' for c, n in IDX_CL_CODES.items())})"
+        )
+    single = len(corp_codes) == 1
+    data = dart.get_json(
+        "fnlttSinglIndx.json" if single else "fnlttCmpnyIndx.json",
+        corp_code=corp_codes[0] if single else ",".join(corp_codes),
+        bsns_year=bsns_year,
+        reprt_code=dart.normalize_reprt_code(reprt_code),
+        idx_cl_code=code,
+    )
+    return {
+        "idx_cl_code": code,
+        "idx_cl_name": IDX_CL_CODES[code],
+        "bsns_year": bsns_year,
+        "count": len(data.get("list", [])),
+        "rows": data.get("list", []),
+    }
+
+
+@mcp.tool()
+def list_dart_apis(category: str | None = None, query: str | None = None) -> dict[str, Any]:
+    """OpenDART가 제공하는 83개 오픈API 전체 목록을 훑는다.
+
+    전용 도구로 안 잡히는 정보를 찾을 때 여기서 엔드포인트를 확인한 뒤
+    call_dart_api로 직접 호출한다.
+
+    Args:
+        category: disclosure, periodic_report, finance, shareholding,
+            major_event, securities_registration 중 하나. 생략하면 전체.
+        query: 한글 항목명이나 엔드포인트 id에 대한 부분 검색어.
+    """
+    endpoints = list(catalog.ENDPOINTS.values())
+    if category:
+        if category not in catalog.CATEGORY_NAMES:
+            raise dart.DartError(
+                f"알 수 없는 카테고리입니다: {category} "
+                f"(사용 가능: {', '.join(catalog.CATEGORY_NAMES)})"
+            )
+        endpoints = [e for e in endpoints if e.category == category]
+    if query:
+        keyword = query.strip().lower()
+        endpoints = [e for e in endpoints if keyword in e.name.lower() or keyword in e.id.lower()]
+    return {
+        "categories": catalog.CATEGORY_NAMES,
+        "count": len(endpoints),
+        "apis": [
+            {
+                "endpoint": e.id,
+                "name": e.name,
+                "category": e.category,
+                "params": list(e.params),
+                "format": e.ext,
+            }
+            for e in endpoints
+        ],
+    }
+
+
+@mcp.tool()
+def call_dart_api(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
+    """OpenDART JSON API를 엔드포인트 이름으로 직접 호출한다.
+
+    전용 도구가 없는 API를 쓰기 위한 창구다. 엔드포인트 이름은 list_dart_apis로 확인한다.
+    인증키(crtfc_key)는 서버가 붙이므로 넣지 않는다.
+
+    Args:
+        endpoint: 엔드포인트 이름 (예: "irdsSttus"). ".json"은 붙여도 되고 안 붙여도 된다.
+        params: 해당 API의 요청 파라미터.
+    """
+    name = endpoint.strip().removesuffix(".json").removesuffix(".xml")
+    known = catalog.ENDPOINTS.get(name)
+    if known is None:
+        raise dart.DartError(
+            f"'{endpoint}'는 OpenDART 엔드포인트가 아닙니다. list_dart_apis로 목록을 확인하세요."
+        )
+    if known.ext != "json":
+        raise dart.DartError(
+            f"{known.name}({known.id})은 ZIP/XML로 응답합니다. "
+            "공시 원문은 get_disclosure_document를, 고유번호는 search_company를 쓰세요."
+        )
+    data = dart.get_json(f"{known.id}.json", **params)
+    data.pop("status", None)
+    data.pop("message", None)
+    return {"endpoint": known.id, "name": known.name, **data}
 
 
 def main() -> None:
