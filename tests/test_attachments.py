@@ -178,19 +178,23 @@ def test_parse_attachment_table_skips_comments():
 LISTED = {
     "rcept_no": "20240315000123",
     "viewer_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20240315000123",
-    "download_page_url": "https://dart.fss.or.kr/pdf/download/main.do?rcp_no=20240315000123&dcm_no=1",
+    "documents": ["본문", "감사보고서", "외부평가기관의 평가의견서"],
     "attachments": [
         {
             "index": 0,
             "filename": "감사보고서.hwpx",
+            "document": "감사보고서",
             "format": "hwpx",
             "download_url": "https://dart.fss.or.kr/a",
+            "download_page_url": "https://dart.fss.or.kr/pdf/download/main.do?rcp_no=X&dcm_no=2",
         },
         {
             "index": 1,
             "filename": "외부평가의견서.pdf",
+            "document": "외부평가기관의 평가의견서",
             "format": "pdf",
             "download_url": "https://dart.fss.or.kr/b",
+            "download_page_url": "https://dart.fss.or.kr/pdf/download/main.do?rcp_no=X&dcm_no=3",
         },
     ],
 }
@@ -318,7 +322,7 @@ def test_download_raises_on_http_error():
 
 def test_read_attachment_reuses_one_session_and_passes_the_referer(stub_dart):
     server.read_attachment("20240315000123", index=0)
-    assert stub_dart[0]["referer"] == LISTED["download_page_url"]
+    assert stub_dart[0]["referer"] == LISTED["attachments"][0]["download_page_url"]
     assert stub_dart[0]["client"] is not None  # 목록 조회와 같은 연결을 쓴다
 
 
@@ -329,3 +333,80 @@ def test_session_yields_one_reusable_client():
         assert isinstance(client, httpx.Client)
         assert client.headers["User-Agent"] == attachments.USER_AGENT
         assert client.follow_redirects is True
+
+
+# --- 첨부문서(본문과 별개인 문서)까지 훑는지 ---------------------------------
+
+VIEWER_WITH_ATTACHED_DOCS = """
+<script>
+node1['rcpNo'] = "20260727000299"; node1['dcmNo'] = "11515469";
+</script>
+<select id="att" name="att">
+  <option value="">첨부문서 선택</option>
+  <option value="/dsaf001/main.do?rcpNo=20260727000299&amp;dcmNo=11515470&amp;eleId=0">외부평가기관의 평가의견서</option>
+  <option value="/dsaf001/main.do?rcpNo=20260727000299&amp;dcmNo=11515471&amp;eleId=0">감사보고서</option>
+</select>
+"""
+
+
+def test_extract_documents_finds_the_attached_document_dropdown():
+    """평가의견서·감사보고서는 본문과 다른 문서번호로 걸린다. 본문 dcm_no만 보면
+    존재조차 안 보인다 — 실제로 이것 때문에 평가의견서를 못 열었다."""
+    docs = attachments.extract_documents(VIEWER_WITH_ATTACHED_DOCS, "20260727000299")
+    assert docs == [
+        ("11515469", "본문"),
+        ("11515470", "외부평가기관의 평가의견서"),
+        ("11515471", "감사보고서"),
+    ]
+
+
+def test_extract_documents_without_attachments_returns_just_the_body():
+    assert attachments.extract_documents(VIEWER_HTML, "20240315000123") == [("9876543", "본문")]
+
+
+def test_extract_documents_is_empty_when_the_viewer_has_none():
+    assert attachments.extract_documents("<html></html>", "20240315000123") == []
+
+
+def test_list_attachments_walks_every_document(monkeypatch):
+    pages = {
+        "11515469": '<td class="tL">주요사항보고서.pdf</td><td><a class="btnFile" href="/f/1">',
+        "11515470": '<td class="tL">평가의견서.pdf</td><td><a class="btnFile" href="/f/2">',
+        "11515471": '<td class="tL">감사보고서.pdf</td><td><a class="btnFile" href="/f/3">',
+    }
+
+    def handler(request):
+        if "dsaf001" in str(request.url):
+            return httpx.Response(200, text=VIEWER_WITH_ATTACHED_DOCS)
+        dcm = str(request.url).split("dcm_no=")[1]
+        return httpx.Response(200, text=pages[dcm])
+
+    with mock_client(handler) as client:
+        listed = attachments.list_attachments("20260727000299", client=client)
+
+    assert listed["documents"] == ["본문", "외부평가기관의 평가의견서", "감사보고서"]
+    assert [a["filename"] for a in listed["attachments"]] == [
+        "주요사항보고서.pdf",
+        "평가의견서.pdf",
+        "감사보고서.pdf",
+    ]
+    # 각 파일이 어느 문서에서 나왔는지, 어느 페이지를 referer로 써야 하는지 함께 남는다
+    opinion = listed["attachments"][1]
+    assert opinion["document"] == "외부평가기관의 평가의견서"
+    assert "dcm_no=11515470" in opinion["download_page_url"]
+
+
+def test_list_attachments_skips_a_document_that_fails(monkeypatch):
+    def handler(request):
+        url = str(request.url)
+        if "dsaf001" in url:
+            return httpx.Response(200, text=VIEWER_WITH_ATTACHED_DOCS)
+        if "dcm_no=11515470" in url:
+            return httpx.Response(403)
+        return httpx.Response(200, text='<td class="tL">남은파일.pdf</td><td><a class="btnFile" href="/f/9">')
+
+    with mock_client(handler) as client:
+        listed = attachments.list_attachments("20260727000299", client=client)
+
+    # 하나가 막혀도 나머지는 나온다. 중복 URL은 한 번만.
+    assert [a["filename"] for a in listed["attachments"]] == ["남은파일.pdf"]

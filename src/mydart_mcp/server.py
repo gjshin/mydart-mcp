@@ -164,6 +164,9 @@ def list_attachments(rcept_no: str) -> dict[str, Any]:
     감사보고서, 외부평가기관 의견서, 계약서처럼 정작 중요한 내용은 본문이 아니라
     첨부에 있는 경우가 많다. 여기서 파일을 고른 뒤 read_attachment로 읽는다.
 
+    본문뿐 아니라 뷰어의 '첨부문서'로 걸린 별도 문서까지 전부 훑는다. 각 파일의
+    document 필드가 어느 문서에서 나왔는지 알려준다.
+
     첨부는 OpenDART 오픈API가 아니라 DART 뷰어를 통해 가져온다. 사용자가 지목한
     공시 하나에만 쓰고, 공시 목록을 돌며 첨부를 긁어모으는 데 쓰지 않는다.
 
@@ -197,7 +200,7 @@ def read_attachment(
         target = _pick_attachment(listed, rcept_no, filename, index)
         raw = attachments.download(
             target["download_url"],
-            referer=listed.get("download_page_url"),
+            referer=target.get("download_page_url"),
             client=client,
         )
 
