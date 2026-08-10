@@ -61,7 +61,7 @@ def search_company(query: str, listed_only: bool = True, limit: int = 10) -> dic
             result.update(
                 count=len(matches),
                 companies=matches,
-                note="상장사에 없어 비상장까지 넓혀 찾았습니다. 사업보고서 주요정보는 비어 있을 수 있습니다.",
+                note="상장사에 없어 비상장까지 넓혀 찾았습니다.",
             )
     return result
 
@@ -401,10 +401,12 @@ def get_periodic_report_item(
     if failed_years:
         result["failed_years"] = failed_years
     if not rows and not dart.is_listed(corp_code):
+        # 비상장사도 사업보고서 제출대상이면 이 항목들이 나온다. 비었다고 단정하지 말고
+        # 이 회사가 실제로 무슨 서류를 내는지 확인하도록 안내한다.
         result["note"] = (
-            "비상장사입니다. 사업보고서 주요정보는 대개 상장사만 제공되므로 다른 연도를 "
-            "더 조회해도 비어 있을 가능성이 높습니다. list_attachments로 감사보고서 첨부를 "
-            "찾아 읽는 편이 낫습니다."
+            "비상장사입니다. 사업보고서 제출대상법인이면 조회되지만, 감사보고서만 제출하는 "
+            "회사면 이 항목이 없습니다. search_disclosures로 이 회사가 어떤 보고서를 내는지 "
+            "확인하고, 감사보고서뿐이라면 list_attachments로 첨부를 읽으세요."
         )
     return result
 

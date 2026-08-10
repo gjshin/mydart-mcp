@@ -319,8 +319,10 @@ def test_periodic_report_flags_unlisted_company_when_empty(monkeypatch):
     result = server.get_periodic_report_item("00164779", ["2024"], "타법인 출자현황")
 
     assert result["count"] == 0
+    # 비상장사도 사업보고서 제출대상이면 데이터가 있다. 없다고 단정하면 안 된다.
     assert "비상장" in result["note"]
-    assert "감사보고서" in result["note"]
+    assert "제출대상법인이면 조회" in result["note"]
+    assert "search_disclosures" in result["note"]
 
 
 def test_periodic_report_rejects_empty_year_list():
