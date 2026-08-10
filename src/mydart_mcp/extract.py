@@ -183,6 +183,8 @@ EXTRACTORS = {
 
 
 def extract(data: bytes, fmt: str) -> str:
+    if not data:
+        raise ExtractError("내려받은 파일이 비어 있습니다.")
     extractor = EXTRACTORS.get(fmt)
     if extractor is None:
         raise ExtractError(

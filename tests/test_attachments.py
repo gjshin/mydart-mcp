@@ -1,6 +1,7 @@
 import io
 import zipfile
 
+import httpx
 import pytest
 
 from mydart_mcp import attachments, extract, server
@@ -124,6 +125,12 @@ def test_extract_rejects_unsupported_format():
         extract.extract(b"...", "xlsx")
 
 
+def test_extract_rejects_empty_download():
+    # 빈 바이트가 pypdf까지 흘러가면 EmptyFileError 같은 내부 오류로 튄다
+    with pytest.raises(extract.ExtractError, match="비어 있습니다"):
+        extract.extract(b"", "pdf")
+
+
 def test_detect_format():
     assert attachments.detect_format("감사보고서.HWP") == "hwp"
     assert attachments.detect_format("평가의견서.hwpx") == "hwpx"
@@ -171,6 +178,7 @@ def test_parse_attachment_table_skips_comments():
 LISTED = {
     "rcept_no": "20240315000123",
     "viewer_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20240315000123",
+    "download_page_url": "https://dart.fss.or.kr/pdf/download/main.do?rcp_no=20240315000123&dcm_no=1",
     "attachments": [
         {
             "index": 0,
@@ -190,12 +198,16 @@ LISTED = {
 
 @pytest.fixture
 def stub_dart(monkeypatch):
-    monkeypatch.setattr(attachments, "list_attachments", lambda rcept_no: LISTED)
-    monkeypatch.setattr(
-        attachments,
-        "download",
-        lambda url: hwpx_bytes("감사의견", "적정") if url.endswith("a") else minimal_pdf("Fair"),
-    )
+    """네트워크만 걷어내고, 다운로드에 넘어온 인자는 기록해 둔다."""
+    calls: list[dict] = []
+    monkeypatch.setattr(attachments, "list_attachments", lambda rcept_no, client=None: LISTED)
+
+    def fake_download(url, referer=None, client=None):
+        calls.append({"url": url, "referer": referer, "client": client})
+        return hwpx_bytes("감사의견", "적정") if url.endswith("a") else minimal_pdf("Fair")
+
+    monkeypatch.setattr(attachments, "download", fake_download)
+    return calls
 
 
 def test_read_attachment_by_index(stub_dart):
@@ -231,7 +243,11 @@ def test_read_attachment_reports_when_no_attachments(monkeypatch):
     monkeypatch.setattr(
         attachments,
         "list_attachments",
-        lambda rcept_no: {"rcept_no": rcept_no, "attachments": [], "note": "거래소공시라 첨부 없음"},
+        lambda rcept_no, client=None: {
+            "rcept_no": rcept_no,
+            "attachments": [],
+            "note": "거래소공시라 첨부 없음",
+        },
     )
     with pytest.raises(attachments.AttachmentError, match="거래소공시"):
         server.read_attachment("20240315000123")
@@ -240,3 +256,76 @@ def test_read_attachment_reports_when_no_attachments(monkeypatch):
 def test_user_agent_identifies_the_tool_and_does_not_spoof_a_browser():
     assert attachments.USER_AGENT.startswith("mydart-mcp/")
     assert "Mozilla" not in attachments.USER_AGENT
+
+
+# --- 다운로드 (DART는 세션 쿠키와 Referer가 없으면 빈 본문을 준다) ------------------
+
+
+def mock_client(handler):
+    return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+
+
+def test_download_sends_referer():
+    seen = {}
+
+    def handler(request):
+        seen["referer"] = request.headers.get("referer")
+        seen["user_agent"] = request.headers.get("user-agent")
+        return httpx.Response(200, content=b"payload")
+
+    with mock_client(handler) as client:
+        # UA는 클라이언트 기본 헤더라 세션을 통해서만 붙는다
+        client.headers["User-Agent"] = attachments.USER_AGENT
+        data = attachments.download(
+            "https://dart.fss.or.kr/pdf/download/pdf.do?x=1",
+            referer="https://dart.fss.or.kr/pdf/download/main.do?x=1",
+            client=client,
+        )
+
+    assert data == b"payload"
+    assert seen["referer"] == "https://dart.fss.or.kr/pdf/download/main.do?x=1"
+    assert seen["user_agent"].startswith("mydart-mcp/")
+
+
+def test_download_rejects_empty_body_with_a_readable_error():
+    def handler(request):
+        return httpx.Response(200, content=b"", headers={"content-type": "text/html"})
+
+    with mock_client(handler) as client:
+        with pytest.raises(attachments.AttachmentError) as caught:
+            attachments.download("https://dart.fss.or.kr/x", client=client)
+
+    message = str(caught.value)
+    assert "빈 응답" in message
+    assert "text/html" in message  # 무엇이 왔는지 알 수 있어야 한다
+    assert "https://dart.fss.or.kr/x" in message
+
+
+def test_download_rejects_oversized_file():
+    def handler(request):
+        return httpx.Response(200, content=b"x" * (attachments.MAX_ATTACHMENT_BYTES + 1))
+
+    with mock_client(handler) as client:
+        with pytest.raises(attachments.AttachmentError, match="너무 큽니다"):
+            attachments.download("https://dart.fss.or.kr/x", client=client)
+
+
+def test_download_raises_on_http_error():
+    with mock_client(lambda request: httpx.Response(404)) as client:
+        with pytest.raises(attachments.AttachmentError, match="HTTP 404"):
+            attachments.download("https://dart.fss.or.kr/x", client=client)
+
+
+def test_read_attachment_reuses_one_session_and_passes_the_referer(stub_dart):
+    server.read_attachment("20240315000123", index=0)
+    assert stub_dart[0]["referer"] == LISTED["download_page_url"]
+    assert stub_dart[0]["client"] is not None  # 목록 조회와 같은 연결을 쓴다
+
+
+def test_session_yields_one_reusable_client():
+    """요청마다 httpx.get으로 새로 접속하면 DART가 세션 쿠키를 못 알아보고
+    200과 함께 빈 본문을 준다. 하나의 Client를 물고 다녀야 한다."""
+    with attachments.session() as client:
+        assert isinstance(client, httpx.Client)
+        assert client.headers["User-Agent"] == attachments.USER_AGENT
+        assert client.follow_redirects is True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import time
@@ -48,6 +49,39 @@ SJ_DIV = {
 
 class DartError(RuntimeError):
     """OpenDART가 오류 상태를 반환했거나 설정이 잘못된 경우."""
+
+
+_KEY_RE = re.compile(r"(crtfc_key=)[^&\s\"']+")
+
+
+def _redact(value: Any) -> Any:
+    """crtfc_key 값을 가린다. httpx가 str이 아닌 URL 객체를 넘기기도 한다."""
+    if isinstance(value, str):
+        return _KEY_RE.sub(r"\1***", value)
+    rendered = str(value)
+    return _KEY_RE.sub(r"\1***", rendered) if "crtfc_key=" in rendered else value
+
+
+class _RedactApiKey(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact(arg) for arg in record.args)
+        return True
+
+
+def hide_api_key_in_logs() -> None:
+    """OpenDART는 인증키를 URL 쿼리로 받고 httpx는 요청 URL을 통째로 로그에 남긴다.
+    그대로 두면 터미널과 클라이언트 로그 파일에 인증키가 평문으로 찍힌다.
+
+    수준을 올려 애초에 안 찍히게 하고, 누가 다시 INFO로 낮춰도 새지 않도록 필터를
+    함께 건다. 진입점(server.main, selftest.main)에서 호출한다.
+    """
+    for name in ("httpx", "httpcore"):
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.WARNING)
+        if not any(isinstance(existing, _RedactApiKey) for existing in logger.filters):
+            logger.addFilter(_RedactApiKey())
 
 
 def cache_dir() -> Path:

@@ -181,7 +181,33 @@ def read_attachment(
         max_chars: 이번 호출에서 반환할 최대 글자 수.
         offset: 읽기 시작할 위치.
     """
-    listed = attachments.list_attachments(rcept_no)
+    with attachments.session() as client:
+        listed = attachments.list_attachments(rcept_no, client=client)
+        target = _pick_attachment(listed, rcept_no, filename, index)
+        raw = attachments.download(
+            target["download_url"],
+            referer=listed.get("download_page_url"),
+            client=client,
+        )
+
+    text = extract.extract(raw, target["format"])
+    chunk = text[offset : offset + max_chars]
+    end = offset + len(chunk)
+    return {
+        "rcept_no": rcept_no,
+        "filename": target["filename"],
+        "format": target["format"],
+        "total_chars": len(text),
+        "offset": offset,
+        "truncated": end < len(text),
+        "next_offset": end if end < len(text) else None,
+        "text": chunk,
+    }
+
+
+def _pick_attachment(
+    listed: dict[str, Any], rcept_no: str, filename: str | None, index: int | None
+) -> dict[str, Any]:
     files = listed["attachments"]
     if not files:
         raise attachments.AttachmentError(
@@ -210,20 +236,7 @@ def read_attachment(
         target = files[index]
     else:
         raise attachments.AttachmentError("filename 또는 index 중 하나는 지정해야 합니다.")
-
-    text = extract.extract(attachments.download(target["download_url"]), target["format"])
-    chunk = text[offset : offset + max_chars]
-    end = offset + len(chunk)
-    return {
-        "rcept_no": rcept_no,
-        "filename": target["filename"],
-        "format": target["format"],
-        "total_chars": len(text),
-        "offset": offset,
-        "truncated": end < len(text),
-        "next_offset": end if end < len(text) else None,
-        "text": chunk,
-    }
+    return target
 
 
 @mcp.tool()
@@ -520,6 +533,7 @@ def call_dart_api(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
 
 
 def main() -> None:
+    dart.hide_api_key_in_logs()
     mcp.run()
 
 

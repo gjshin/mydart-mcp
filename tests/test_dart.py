@@ -1,6 +1,8 @@
 import io
+import logging
 import zipfile
 
+import httpx
 import pytest
 
 from mydart_mcp import catalog, dart, server
@@ -106,6 +108,31 @@ def test_get_zip_returns_members(monkeypatch):
         archive.writestr("CORPCODE.xml", CORP_XML)
     monkeypatch.setattr(dart.httpx, "get", lambda *a, **k: _FakeResponse(content=buffer.getvalue()))
     assert dart.get_zip("corpCode.xml")["CORPCODE.xml"] == CORP_XML
+
+
+def test_api_key_never_reaches_the_logs(caplog):
+    """OpenDART는 인증키를 URL에 싣고 httpx는 URL을 통째로 로그에 남긴다.
+    이 조합 때문에 실제로 사용자 터미널에 키가 평문으로 찍힌 적이 있다."""
+    dart.hide_api_key_in_logs()
+    logger = logging.getLogger("httpx")
+    url = httpx.URL(
+        "https://opendart.fss.or.kr/api/list.json?bgn_de=20260101&crtfc_key=SUPERSECRETKEY"
+    )
+
+    # 누군가 로그 수준을 다시 낮춰도 새면 안 된다
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        logger.info('HTTP Request: GET %s "HTTP/1.1 200 OK"', url)
+
+    assert "SUPERSECRETKEY" not in caplog.text
+    assert "crtfc_key=***" in caplog.text
+    assert "bgn_de=20260101" in caplog.text  # 나머지는 남아야 진단이 된다
+
+
+def test_log_redaction_is_installed_once():
+    dart.hide_api_key_in_logs()
+    dart.hide_api_key_in_logs()
+    installed = logging.getLogger("httpx").filters
+    assert sum(isinstance(f, dart._RedactApiKey) for f in installed) == 1
 
 
 def test_catalog_covers_all_83_open_apis():

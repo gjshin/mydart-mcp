@@ -15,6 +15,8 @@ OpenDART 오픈API에는 첨부파일 엔드포인트가 없다. 첨부는 DART 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import httpx
 
@@ -70,32 +72,43 @@ def parse_attachment_table(html: str) -> list[tuple[str, str]]:
     return [(name.strip(), href) for name, href in _ROW_RE.findall(cleaned)]
 
 
-def _get(url: str, binary: bool = False) -> httpx.Response:
-    response = httpx.get(
-        url,
+@contextmanager
+def session() -> Iterator[httpx.Client]:
+    """뷰어 → 다운로드 페이지 → 파일을 한 연결로 잇는다.
+
+    DART는 뷰어에서 발급한 세션 쿠키를 들고 와야 파일을 내준다. 요청마다 새로
+    접속하면 200을 주면서 본문은 비워 보낸다. 브라우저가 하는 대로 쿠키를 물고
+    Referer를 붙여야 한다.
+    """
+    with httpx.Client(
         headers={"User-Agent": USER_AGENT},
         timeout=60.0,
         follow_redirects=True,
-    )
+    ) as client:
+        yield client
+
+
+def _get(client: httpx.Client, url: str, referer: str | None = None) -> httpx.Response:
+    response = client.get(url, headers={"Referer": referer} if referer else {})
     if response.status_code != 200:
         raise AttachmentError(f"DART 요청 실패: {url} → HTTP {response.status_code}")
-    if binary and len(response.content) > MAX_ATTACHMENT_BYTES:
-        raise AttachmentError(
-            f"첨부파일이 너무 큽니다 ({len(response.content) // 1024 // 1024}MB). "
-            f"브라우저에서 직접 받으세요: {url}"
-        )
     return response
 
 
-def list_attachments(rcept_no: str) -> dict:
+def list_attachments(rcept_no: str, client: httpx.Client | None = None) -> dict:
     """공시 하나의 첨부파일 목록."""
+    if client is None:
+        with session() as own:
+            return list_attachments(rcept_no, client=own)
+
     viewer_url = f"{DART_ORIGIN}/dsaf001/main.do?rcpNo={rcept_no}"
-    dcm_no = extract_dcm_no(_get(viewer_url).text, rcept_no)
+    dcm_no = extract_dcm_no(_get(client, viewer_url).text, rcept_no)
     if not dcm_no:
         # 거래소공시 등 일부는 뷰어에 dcm_no가 없어 첨부 경로 자체가 존재하지 않는다.
         return {
             "rcept_no": rcept_no,
             "viewer_url": viewer_url,
+            "download_page_url": None,
             "attachments": [],
             "note": (
                 "이 공시에는 접근 가능한 첨부파일이 없습니다(거래소공시 등). "
@@ -104,10 +117,11 @@ def list_attachments(rcept_no: str) -> dict:
         }
 
     download_page = f"{DART_ORIGIN}/pdf/download/main.do?rcp_no={rcept_no}&dcm_no={dcm_no}"
-    rows = parse_attachment_table(_get(download_page).text)
+    rows = parse_attachment_table(_get(client, download_page, referer=viewer_url).text)
     return {
         "rcept_no": rcept_no,
         "viewer_url": viewer_url,
+        "download_page_url": download_page,
         "attachments": [
             {
                 "index": i,
@@ -120,5 +134,24 @@ def list_attachments(rcept_no: str) -> dict:
     }
 
 
-def download(url: str) -> bytes:
-    return _get(url, binary=True).content
+def download(url: str, referer: str | None = None, client: httpx.Client | None = None) -> bytes:
+    """첨부파일 하나를 내려받는다. referer에는 그 파일이 걸려 있던 다운로드 페이지를 넘긴다."""
+    if client is None:
+        with session() as own:
+            return download(url, referer=referer, client=own)
+
+    response = _get(client, url, referer=referer)
+    content = response.content
+    if not content:
+        # DART가 세션·Referer를 못 받아들이면 200을 주면서 본문을 비워 보낸다.
+        raise AttachmentError(
+            f"DART가 빈 응답을 돌려줬습니다 "
+            f"(content-type={response.headers.get('content-type', '알 수 없음')}). "
+            f"브라우저에서 직접 받으세요: {url}"
+        )
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise AttachmentError(
+            f"첨부파일이 너무 큽니다 ({len(content) // 1024 // 1024}MB). "
+            f"브라우저에서 직접 받으세요: {url}"
+        )
+    return content

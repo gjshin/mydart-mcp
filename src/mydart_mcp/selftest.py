@@ -142,6 +142,7 @@ HINTS = (
 
 
 def run(rcept_no: str | None = None) -> int:
+    dart.hide_api_key_in_logs()
     state: State = {}
     if rcept_no:
         state["rcept_no"] = rcept_no
