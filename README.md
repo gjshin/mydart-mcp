@@ -123,13 +123,16 @@ $cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([ordered]@{ m
 ## 5단계 · DART 연결 확인 (Claude에 붙이기 전에)
 
 ```powershell
-uv run mydart-mcp-selftest
+mydart-mcp-selftest
 ```
+
+인증키는 4단계에서 Claude 설정에 넣었으므로 거기서 읽어온다. 다른 키로 확인하려면
+`$env:DART_API_KEY="키"`를 먼저 실행하면 그쪽이 우선한다.
 
 ```
 mydart-mcp 자체점검
 
-  ✓  API 키 설정: 40자 설정됨
+  ✓  API 키 설정: 40자 설정됨 (Claude 설정에서 읽음: claude_desktop_config.json)
   ✓  OpenDART 연결: 최근 7일 공시 3,806건 조회됨
   ✓  기업 고유번호 조회: 삼성전자 → 00126380
   ✓  재무제표 조회: 2025년 손익계산서 계정 17개 (통화 KRW)
@@ -322,14 +325,25 @@ claude mcp add mydart --env DART_API_KEY=인증키 -- ~/.local/bin/mydart-mcp
 
 # 업데이트
 
-코드가 갱신되면 ZIP을 새로 받아 압축을 풀고, 그 폴더에서:
+ZIP을 새로 받아 압축을 풀고, **`pyproject.toml`이 보이는 폴더**에서:
 
 ```powershell
+Get-Process Claude,mydart-mcp -ErrorAction SilentlyContinue | Stop-Process -Force
 & "$env:USERPROFILE\.local\bin\uv.exe" tool install --force .
-Get-Process Claude -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+**끄는 게 먼저다.** 서버가 돌고 있으면 실행 파일이 잠겨 있어
+`failed to remove directory ... 액세스가 거부되었습니다 (os error 5)`가 난다.
+
+새 코드가 맞는지 미리 확인하려면 (옛 폴더에서 실행하는 실수를 막는다):
+
+```powershell
+Select-String -Path "src\mydart_mcp\server.py" -Pattern "bsns_years" -Quiet   # True여야 한다
 ```
 
 설정 파일은 손댈 필요 없다 — `mydart-mcp.exe` 자리는 그대로다.
+설치가 끝나면 옛 폴더는 지워도 된다. `uv tool install`이 코드를 자기 저장소로 복사해 가므로
+실행에 원본 폴더가 필요하지 않다 (`uvx --from 폴더` 방식과 다른 점이다).
 
 ---
 

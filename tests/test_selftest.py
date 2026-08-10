@@ -1,3 +1,6 @@
+import json
+import os
+
 import pytest
 
 from mydart_mcp import selftest
@@ -72,7 +75,7 @@ def test_rcept_no_is_passed_into_state(capture_steps, capsys):
 def test_api_key_check_never_prints_the_key(monkeypatch):
     monkeypatch.setenv("DART_API_KEY", "abcdef0123456789" * 2)
     detail = selftest.check_api_key({})
-    assert detail == "32자 설정됨"
+    assert detail == "32자 설정됨 (환경변수)"
     assert "abcdef" not in detail
 
 
@@ -88,3 +91,46 @@ def test_attachment_steps_skip_without_a_target():
         selftest.check_read_attachment({})
     with pytest.raises(selftest.Skip):
         selftest.check_financials({})
+
+
+def _write_config(tmp_path, monkeypatch, payload):
+    path = tmp_path / "claude_desktop_config.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(selftest, "claude_config_paths", lambda: [path])
+    return path
+
+
+def test_api_key_prefers_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("DART_API_KEY", "from-env")
+    _write_config(tmp_path, monkeypatch, {"mcpServers": {"mydart": {"env": {"DART_API_KEY": "from-file"}}}})
+    assert selftest.check_api_key({}) == "8자 설정됨 (환경변수)"
+
+
+def test_api_key_falls_back_to_the_claude_config(tmp_path, monkeypatch):
+    """설치 후 키는 Claude 설정에만 있고 셸에는 없다. 그걸 '키 없음'으로 보고하면
+    멀쩡한 설치를 의심하게 된다."""
+    monkeypatch.delenv("DART_API_KEY", raising=False)
+    _write_config(tmp_path, monkeypatch, {"mcpServers": {"mydart": {"env": {"DART_API_KEY": "0123456789"}}}})
+
+    detail = selftest.check_api_key({})
+
+    assert "Claude 설정에서 읽음" in detail
+    assert "0123456789" not in detail  # 키 자체는 화면에 찍지 않는다
+    assert os.environ["DART_API_KEY"] == "0123456789"  # 이후 단계가 쓸 수 있어야 한다
+
+
+def test_api_key_ignores_a_config_without_the_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("DART_API_KEY", raising=False)
+    _write_config(tmp_path, monkeypatch, {"preferences": {"sidebarMode": "epitaxy"}})
+    with pytest.raises(selftest.Failure) as caught:
+        selftest.check_api_key({})
+    assert caught.value.fatal is True
+
+
+def test_api_key_survives_a_broken_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("DART_API_KEY", raising=False)
+    path = tmp_path / "claude_desktop_config.json"
+    path.write_text("{ 망가진 JSON", encoding="utf-8")
+    monkeypatch.setattr(selftest, "claude_config_paths", lambda: [path, tmp_path / "없는파일.json"])
+    with pytest.raises(selftest.Failure):
+        selftest.check_api_key({})

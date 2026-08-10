@@ -12,8 +12,10 @@ MCP 서버는 stdout이 JSON-RPC 채널이라 아무것도 찍으면 안 되지�
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any, Callable
 
 from . import attachments, dart, server
@@ -34,15 +36,52 @@ class Skip(Exception):
 State = dict[str, Any]
 
 
+def claude_config_paths() -> list[Path]:
+    appdata = os.environ.get("APPDATA")
+    paths = [Path.home() / "Library/Application Support/Claude/claude_desktop_config.json",
+             Path.home() / ".config/Claude/claude_desktop_config.json"]
+    if appdata:
+        paths.insert(0, Path(appdata) / "Claude" / "claude_desktop_config.json")
+    return paths
+
+
+def key_from_claude_config() -> tuple[str, Path] | None:
+    """Claude Desktop 설정에 넣어둔 인증키를 꺼낸다.
+
+    설치를 마치면 키는 Claude 설정 파일에만 있고 셸 환경변수에는 없다. 그 상태로
+    점검을 돌리면 "키가 없다"고 나와서, 멀쩡히 설치된 것을 잘못 의심하게 된다.
+    """
+    for path in claude_config_paths():
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        servers = config.get("mcpServers")
+        if not isinstance(servers, dict):
+            continue
+        for server_config in servers.values():
+            key = (server_config or {}).get("env", {}).get("DART_API_KEY", "")
+            if isinstance(key, str) and key.strip():
+                return key.strip(), path
+    return None
+
+
 def check_api_key(state: State) -> str:
     key = os.environ.get("DART_API_KEY", "").strip()
-    if not key:
-        raise Failure(
-            "DART_API_KEY가 비어 있습니다. https://opendart.fss.or.kr 에서 인증키를 발급받아 "
-            "환경변수로 설정하세요.",
-            fatal=True,
-        )
-    return f"{len(key)}자 설정됨"
+    if key:
+        return f"{len(key)}자 설정됨 (환경변수)"
+
+    found = key_from_claude_config()
+    if found:
+        key, path = found
+        os.environ["DART_API_KEY"] = key
+        return f"{len(key)}자 설정됨 (Claude 설정에서 읽음: {path.name})"
+
+    raise Failure(
+        "DART_API_KEY를 못 찾았습니다. https://opendart.fss.or.kr 에서 인증키를 발급받아 "
+        '환경변수로 설정하거나($env:DART_API_KEY="키"), Claude 설정 파일에 등록하세요.',
+        fatal=True,
+    )
 
 
 def check_opendart(state: State) -> str:
