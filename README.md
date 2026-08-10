@@ -1,15 +1,339 @@
 # mydart-mcp
 
 한국 금융감독원 전자공시시스템(DART)의 [OpenDART API](https://opendart.fss.or.kr)를 MCP 도구로 감싼 서버.
-Claude가 상장사 공시와 재무제표를 직접 조회해서 분석할 수 있게 한다.
+Claude가 상장사 공시·재무제표·첨부파일을 직접 조회해서 분석할 수 있게 한다.
 
-**OpenDART가 공개한 83개 오픈API를 전부 커버한다.** 다만 도구를 83개 등록하면 도구 목록만으로
-컨텍스트를 크게 잡아먹고 모델의 도구 선택 정확도가 떨어지므로, 자주 쓰는 것은 전용 도구로 두고
-나머지는 카테고리별 묶음 도구가 `item` 파라미터로 받는 구조로 정리했다.
+- **OpenDART 83개 오픈API 전부** 커버 (재무제표, 지분공시, 주요사항보고서, 증권신고서 …)
+- **공시 첨부파일 읽기** — 감사보고서·평가의견서 같은 HWP/PDF를 텍스트로 (오픈API에 없는 기능)
+- 설치가 잘 됐는지 한 번에 확인하는 **자체점검 명령** 포함
 
-## 도구 15개
+```
+"삼성전자 2025년 연결 손익계산서 정리해줘"
+"네이버랑 카카오 실적 비교해줘"
+"이 합병 공시 첨부된 외부평가의견서 읽고 합병비율 근거 정리해줘"
+```
 
-### 자주 쓰는 것 — 전용 도구
+---
+
+# 설치 (Windows + Claude Desktop)
+
+처음 설치하면 30분쯤 걸린다. **순서대로 하고, 각 단계의 확인을 건너뛰지 않는 게 결국 빠르다.**
+
+## 준비물
+
+| | |
+|---|---|
+| OpenDART 인증키 | [여기서 무료 발급](https://opendart.fss.or.kr/uss/umt/EgovMberInsertView.do) (일 20,000건) |
+| GitHub 로그인 | 이 저장소가 비공개면 로그인해야 코드를 받을 수 있다 |
+| 관리자 권한 | **필요 없다.** 모두 사용자 폴더에 설치된다 (회사 노트북에서도 가능) |
+
+## 0단계 · Microsoft Store 버전 Claude 제거 ⚠️
+
+**이걸 먼저 하지 않으면 나머지가 전부 헛수고가 된다.**
+
+Store 버전 Claude는 설정 파일을 격리된 폴더에서 읽는다. 표준 위치에 설정을 넣어도 앱이 못 본다.
+
+PowerShell을 열고 (시작 버튼 → `powershell` 입력 → 엔터):
+
+```powershell
+Get-AppxPackage *Claude*
+```
+
+무언가 나오면 Store 버전이 깔려 있는 것이다. 제거한다:
+
+```powershell
+Get-AppxPackage *Claude* | Remove-AppxPackage
+```
+
+그다음 [claude.ai/download](https://claude.ai/download)에서 **정식 설치 파일**을 받아 설치한다.
+
+확인 — Claude를 실행한 상태에서:
+
+```powershell
+Get-Process Claude | Select-Object -ExpandProperty Path -Unique
+```
+
+`...\AppData\Local\AnthropicClaude\...` 가 나와야 한다.
+`...\WindowsApps\Claude_...` 가 나오면 아직 Store 버전이다.
+
+## 1단계 · uv 설치
+
+`uv`는 파이썬 프로그램을 자동으로 준비·실행해 준다. 파이썬을 따로 깔 필요 없다.
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**설치 후 PowerShell 창을 닫고 새로 연다** (경로 인식에 필요). 확인:
+
+```powershell
+uv --version
+```
+
+## 2단계 · 코드 받기
+
+1. 브라우저에서 이 저장소 접속 → 초록색 **Code** → **Download ZIP**
+2. 압축을 푼다
+3. **`pyproject.toml`이 바로 보이는 폴더**를 찾는다 — 압축을 풀면 같은 이름 폴더가 한 겹 더 있는 경우가 많다
+
+## 3단계 · 그 폴더에서 PowerShell 열기
+
+파일 탐색기에서 그 폴더를 열고 → **주소창을 클릭** → `powershell` 입력 → 엔터.
+그 위치에서 PowerShell이 열린다. 경로를 타이핑할 필요가 없다.
+
+확인:
+
+```powershell
+dir pyproject.toml
+```
+
+**파일 정보가 안 나오면 폴더가 틀린 것이다. 여기서 멈추고 폴더부터 바로잡는다.**
+
+## 4단계 · 설치 + 설정 (명령 2개)
+
+먼저 인증키를 변수에 담는다. 키 부분만 바꿔서:
+
+```powershell
+$key = "여기에_발급받은_인증키"
+```
+
+이어서 아래 전체를 복사해 붙여넣고 엔터. 1~2분 걸린다.
+
+```powershell
+& "$env:USERPROFILE\.local\bin\uv.exe" tool install --force .
+$exe = "$env:USERPROFILE\.local\bin\mydart-mcp.exe"
+$path = "$env:APPDATA\Claude\claude_desktop_config.json"
+if (Test-Path $path) { Copy-Item $path "$path.bak" -Force; $cfg = Get-Content $path -Raw | ConvertFrom-Json } else { New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null; $cfg = [pscustomobject]@{} }
+$cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([ordered]@{ mydart = [ordered]@{ command = $exe; env = [ordered]@{ DART_API_KEY = $key } } }) -Force
+[System.IO.File]::WriteAllText($path, ($cfg | ConvertTo-Json -Depth 30))
+(Get-Content $path -Raw) -replace '"DART_API_KEY":\s*"[^"]*"','"DART_API_KEY": "***"'
+```
+
+이 명령이 하는 일:
+
+- 프로그램을 `mydart-mcp.exe`로 **미리 설치**한다
+- Claude 설정 파일에 `mydart` 항목을 **추가**한다 (기존 설정은 보존, `.bak` 백업 생성)
+- 마지막에 결과를 화면에 보여준다 (키는 `***`로 가려짐)
+
+> **왜 `uvx`가 아니라 `uv tool install`인가**
+> 설정에 `"command": "uvx", "args": ["--from", "폴더", "mydart-mcp"]`를 쓰면, Claude가 켜질 때마다
+> uvx가 패키지를 새로 빌드한다. 1~2분이 걸려서 Claude가 기다리다 포기하고
+> **"Could not attach to MCP server mydart"**를 띄운다. 미리 exe로 설치해두면 즉시 뜬다.
+
+## 5단계 · DART 연결 확인 (Claude에 붙이기 전에)
+
+```powershell
+uv run mydart-mcp-selftest
+```
+
+```
+mydart-mcp 자체점검
+
+  ✓  API 키 설정: 40자 설정됨
+  ✓  OpenDART 연결: 최근 7일 공시 3,806건 조회됨
+  ✓  기업 고유번호 조회: 삼성전자 → 00126380
+  ✓  재무제표 조회: 2025년 손익계산서 계정 17개 (통화 KRW)
+  ✓  공시 첨부 목록: 공시 20260807000794 첨부 1개 — ...
+  ✓  첨부파일 읽기: ... → 51,203자 추출
+
+통과 6 · 건너뜀 0 · 실패 0
+```
+
+**6개 다 ✓여야 다음으로 간다.** 실패해도 멈추지 않고 끝까지 돌기 때문에 어디서 깨졌는지 한눈에 보인다.
+
+사내망에서 `opendart.fss.or.kr` 또는 `dart.fss.or.kr`이 막혀 있으면 여기서 드러난다
+(`ConnectError` / `ProxyError`). 그 경우 방화벽 예외를 요청해야 한다.
+
+## 6단계 · Claude Desktop 재시작
+
+X로 닫는 것만으로는 백그라운드에 남아 설정을 다시 읽지 않는다:
+
+```powershell
+Get-Process Claude -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+시작 메뉴에서 Claude를 다시 실행한다.
+
+## 7단계 · 확인
+
+**설정 → 개발자(Developer)** 에 `mydart`가 보이면 성공. 채팅창에:
+
+```
+삼성전자 찾아줘
+```
+
+`00126380`이 나오면 끝이다. 처음엔 도구 사용 승인을 물어볼 수 있다 — 허용하면 된다.
+
+> 슬래시(`/`) 메뉴에는 안 나타난다. 그건 프롬프트용이고, MCP **도구**는 Claude가 필요할 때
+> 알아서 호출한다. 설정 → 개발자에 떠 있으면 정상이다.
+
+---
+
+# 문제 해결
+
+실제로 겪은 것들이다. 증상별로 찾아보면 된다.
+
+### "Could not attach to MCP server mydart"
+
+Claude가 서버를 띄웠지만 응답을 못 받은 것이다. 로그부터 본다:
+
+```powershell
+Get-Content "$env:APPDATA\Claude\logs\mcp-server-mydart.log" -Tail 30
+```
+
+| 로그에 보이는 것 | 원인과 해결 |
+|---|---|
+| `initialize` 후 60초 뒤 `notifications/cancelled` | 응답이 파이프 버퍼에 갇힌 것. 최신 버전은 코드에서 해결됐다. 구버전이면 아래 "버퍼링" 참고 |
+| 프로그램 실행 자체가 안 됨 | `command` 경로 확인 → `dir "$env:USERPROFILE\.local\bin\mydart-mcp.exe"` |
+| 아무 로그도 없음 | 앱이 설정을 못 읽는 중. Store 버전 여부부터 확인 (0단계) |
+
+**버퍼링 임시 조치** — 설정의 `env`에 아래를 추가하면 우회된다:
+
+```powershell
+$path = "$env:APPDATA\Claude\claude_desktop_config.json"
+$cfg = Get-Content $path -Raw | ConvertFrom-Json
+$cfg.mcpServers.mydart.env | Add-Member -NotePropertyName PYTHONUNBUFFERED -NotePropertyValue "1" -Force
+$cfg.mcpServers.mydart.env | Add-Member -NotePropertyName PYTHONUTF8 -NotePropertyValue "1" -Force
+[System.IO.File]::WriteAllText($path, ($cfg | ConvertTo-Json -Depth 30))
+Get-Process Claude -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+서버가 정상인지 직접 확인하려면:
+
+```powershell
+'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' | & "$env:USERPROFILE\.local\bin\mydart-mcp.exe"
+```
+
+`{"jsonrpc":"2.0","id":1,"result":{...}}` 가 나오면 서버는 정상이다.
+
+### 설정 → 개발자에 `mydart`가 아예 없다
+
+앱이 설정 파일을 못 읽고 있다. **거의 항상 Store 버전 문제다** (0단계).
+
+앱이 실제로 읽는 파일은 **설정 → 개발자 → 구성 편집**을 누르면 열린다. 그 경로가
+`%APPDATA%\Claude\claude_desktop_config.json`이 아니면, 앱이 다른 폴더를 보고 있는 것이다.
+
+폴더가 맞는지 보는 요령 — 앱이 쓰는 폴더라면 `logs` 같은 것들이 같이 있다:
+
+```powershell
+dir "$env:APPDATA\Claude"
+```
+
+우리가 만든 `claude_desktop_config.json` 하나만 덩그러니 있으면 그 폴더가 아니다.
+
+### `notepad "경로"` 가 "지정된 경로를 찾을 수 없습니다"
+
+경로에 공백이 있으면 따옴표 없이는 실패한다. 항상 큰따옴표로 감싼다. 폴더 자체가 없으면:
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:APPDATA\Claude"
+```
+
+### selftest에서 `ConnectError` / `ProxyError`
+
+방화벽·프록시가 `opendart.fss.or.kr` 또는 `dart.fss.or.kr`을 막고 있다. 사내망에서 흔하다.
+
+### selftest에서 `OpenDART 오류 [020]` / `[010]`
+
+`020`은 일일 20,000건 한도 초과, `010`은 등록되지 않은 인증키다.
+
+### 첨부파일 읽기만 실패한다
+
+DART 뷰어 HTML 구조가 바뀌었을 수 있다. 오류 메시지에 `content-type`이 함께 나오니 그대로 보고하면 된다.
+
+### 응답이 너무 느리다
+
+- **첫 질문**은 기업 목록 10만 건을 받느라 느리다. 이후 7일간 캐시된다
+- **"최근 5년"** 같은 요청은 API를 5번 따로 부른다 (OpenDART가 연도를 하나씩만 받는다).
+  기간을 좁히면 그만큼 빨라진다
+- **비상장사**는 상장사 목록에 없어 전체 검색으로 넘어간다. 종목코드를 주면 빠르다
+
+---
+
+# 사용법
+
+자연어로 물어보면 된다. Claude가 알아서 고유번호를 찾고 필요한 도구를 호출한다.
+
+```
+에코프로비엠 개황이랑 최근 공시 정리해줘
+삼성전자 2025년 연결 손익계산서 표로 만들어줘
+네이버 카카오 크래프톤 2025년 실적 비교해줘
+셀트리온 최대주주 현황이랑 변동 이력 정리해줘
+에코프로 5% 이상 대량보유 변동 내역 보여줘
+셀트리온 작년에 전환사채나 유상증자 한 적 있어?
+이 합병 공시 첨부된 외부평가의견서 읽고 합병비율 근거 정리해줘
+```
+
+## 잘 나오게 하는 요령
+
+| | |
+|---|---|
+| **회사를 특정한다** | `컴투스` → 컴투스/컴투스홀딩스 혼동. `컴투스(078340)`처럼 종목코드를 주면 확실하다 |
+| **연도를 말한다** | "2025년 사업보고서 기준", "최근 3년" |
+| **목적을 붙인다** | "재무제표 보여줘"보다 "재무건전성 위험한지 판단해줘"가 훨씬 낫다 |
+| **여러 단계를 한 번에** | "5년치 뽑아서 연도별 표 만들고 추세 정리해줘" — 알아서 반복 조회한다 |
+
+## 한계
+
+| | |
+|---|---|
+| 기간 | 재무제표·주요사항보고서는 2015년 이후, 재무지표는 2023년 이후 |
+| 기본 단위 | 연간(사업보고서). 분기는 "3분기 기준으로"라고 명시 |
+| 주가 | 없음. DART는 공시 시스템이라 시세·시가총액을 제공하지 않는다 |
+| 연결 없는 회사 | "별도재무제표로 보여줘" |
+| 비상장사 | 사업보고서 주요정보(타법인 출자현황 등)가 대개 비어 있다. 감사보고서 첨부를 읽는 편이 낫다 |
+| 첨부 형식 | HWP·HWPX·PDF·텍스트만. XLSX 등은 다운로드 링크만 준다 |
+
+---
+
+# macOS
+
+같은 흐름이고 명령만 다르다.
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh          # 1. uv 설치
+git clone <이 저장소> && cd mydart-mcp                    # 2. 코드 받기
+uv tool install --force .                                # 3. 프로그램 설치
+DART_API_KEY=인증키 uv run mydart-mcp-selftest            # 4. 연결 확인
+```
+
+설정 파일은 `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mydart": {
+      "command": "/Users/사용자명/.local/bin/mydart-mcp",
+      "env": { "DART_API_KEY": "발급받은_인증키" }
+    }
+  }
+}
+```
+
+Claude Code에서는 한 줄로 끝난다:
+
+```bash
+claude mcp add mydart --env DART_API_KEY=인증키 -- ~/.local/bin/mydart-mcp
+```
+
+---
+
+# 업데이트
+
+코드가 갱신되면 ZIP을 새로 받아 압축을 풀고, 그 폴더에서:
+
+```powershell
+& "$env:USERPROFILE\.local\bin\uv.exe" tool install --force .
+Get-Process Claude -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+설정 파일은 손댈 필요 없다 — `mydart-mcp.exe` 자리는 그대로다.
+
+---
+
+# 도구 15개
+
+## 자주 쓰는 것 — 전용 도구
 
 | 도구 | 하는 일 |
 |---|---|
@@ -23,9 +347,10 @@ Claude가 상장사 공시와 재무제표를 직접 조회해서 분석할 수 
 | `compare_financials` | 여러 회사(최대 10곳)의 주요계정 비교 |
 | `get_financial_indicators` | 주요 재무지표 — 수익성·안정성·성장성·활동성 (단일/다중회사 자동 선택) |
 
-### 나머지 — 카테고리 묶음 도구
+## 나머지 — 카테고리 묶음 도구
 
-각 도구의 설명에 선택 가능한 `item` 이름이 전부 들어 있어, 모델이 별도 조회 없이 바로 고를 수 있다.
+각 도구의 설명에 선택 가능한 `item` 이름이 전부 들어 있어, 모델이 별도 조회 없이 바로 고른다.
+`item`은 한글명(`"최대주주 현황"`), 엔드포인트 id(`"hyslrSttus"`), 부분일치(`"소액주주"`) 모두 받는다.
 
 | 도구 | 커버 범위 | API 수 |
 |---|---|---|
@@ -34,14 +359,14 @@ Claude가 상장사 공시와 재무제표를 직접 조회해서 분석할 수 
 | `get_securities_registration` | 증권신고서 — 지분증권·채무증권·증권예탁증권·합병·분할·주식교환 | 6 |
 | `get_shareholding` | 지분공시 — 대량보유 상황보고(5%룰), 임원·주요주주 소유보고 | 2 |
 
-### 탐색·직접 호출
+## 탐색·직접 호출
 
 | 도구 | 하는 일 |
 |---|---|
 | `list_dart_apis` | 83개 API 전체 목록을 카테고리·검색어로 훑는다 |
 | `call_dart_api` | 엔드포인트 이름으로 JSON API를 직접 호출 (전용 도구가 없는 API용 창구) |
 
-### API 커버리지
+## API 커버리지
 
 | 카테고리 | API 수 | 담당 도구 |
 |---|---|---|
@@ -53,9 +378,12 @@ Claude가 상장사 공시와 재무제표를 직접 조회해서 분석할 수 
 | 증권신고서 주요정보 (DS006) | 6 | `get_securities_registration` |
 | **합계** | **83** | |
 
-첨부파일(`list_attachments`, `read_attachment`)은 오픈API 83개에 속하지 않는다 — 아래 참고.
+83개 중 `fnlttXbrl`(재무제표 원본파일)만 ZIP 응답이라 지원하지 않는다. 나머지 82개는 모두 호출 가능하다.
+첨부파일 도구 2개는 오픈API에 속하지 않는다 — 아래 참고.
 
-## 첨부파일 읽기
+---
+
+# 첨부파일 읽기
 
 DART 공시는 "본문 + 첨부" 구조이고, 감사보고서·외부평가의견서·계약서처럼 정작 중요한 내용은
 첨부에 있는 경우가 많다. 그런데 **OpenDART 오픈API에는 첨부 엔드포인트가 없다.** 그래서 이
@@ -74,7 +402,7 @@ read_attachment(rcept_no="20240315000123", filename="감사보고서")
 그 밖의 형식(XLSX 등)은 목록에 `unsupported`로 표시되고 `download_url`을 주니 직접 받으면 된다.
 HWP는 파이썬에 쓸 만한 경량 라이브러리가 없어(`pyhwp`는 AGPL) HWP 5.0 레코드 파서를 직접 넣었다.
 
-### 지켜야 할 선
+## 지켜야 할 선
 
 `dart.fss.or.kr/robots.txt`는 뷰어(`/dsaf001/main.do`)와 다운로드(`/pdf/download/`) 경로를
 크롤러에 대해 Disallow로 지정하고 있다. 이 두 도구는 그래서 아래를 지킨다.
@@ -84,80 +412,14 @@ HWP는 파이썬에 쓸 만한 경량 라이브러리가 없어(`pyhwp`는 AGPL)
 - User-Agent에 `mydart-mcp/<버전>`을 그대로 노출한다. 브라우저를 사칭하지 않는다 — DART 운영자가
   로그에서 트래픽 주체를 식별하고 필요하면 차단할 수 있어야 한다.
 - 첨부 30MB, 압축 해제 200MB를 넘으면 받지 않고 링크만 돌려준다.
+- 뷰어 → 다운로드 페이지 → 파일을 **한 연결로** 잇는다. DART가 발급한 세션 쿠키와 Referer를
+  들고 가야 파일을 내준다. 요청마다 새로 접속하면 200을 주면서 본문을 비워 보낸다.
 
 공시 본문과 재무 데이터는 언제나 공식 오픈API를 쓴다. 스크래핑은 첨부에만 쓴다.
 
-## 설치
+---
 
-1. [OpenDART](https://opendart.fss.or.kr/uss/umt/EgovMberInsertView.do)에서 인증키를 발급받는다 (무료, 일 20,000건).
-2. Claude Desktop 설정 파일에 아래를 추가한다.
-   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "mydart": {
-      "command": "uvx",
-      "args": ["--from", "/절대경로/mydart-mcp", "mydart-mcp"],
-      "env": {
-        "DART_API_KEY": "발급받은_인증키"
-      }
-    }
-  }
-}
-```
-
-3. Claude Desktop을 완전히 종료했다가 다시 켠다.
-
-Claude Code에서는 아래 한 줄로 등록한다.
-
-```bash
-claude mcp add mydart --env DART_API_KEY=발급받은_인증키 -- uvx --from /절대경로/mydart-mcp mydart-mcp
-```
-
-## 설치 후 확인
-
-실제로 DART에 붙는지 한 번에 점검한다.
-
-```bash
-DART_API_KEY=발급받은_인증키 uv run mydart-mcp-selftest
-```
-
-```
-mydart-mcp 자체점검
-
-  ✓  API 키 설정: 40자 설정됨
-  ✓  OpenDART 연결: 최근 7일 공시 3,142건 조회됨
-  ✓  기업 고유번호 조회: 삼성전자 → 00126380 (캐시: ~/.cache/mydart-mcp)
-  ✓  재무제표 조회: 2025년 손익계산서 계정 37개 (통화 KRW)
-  ✓  공시 첨부 목록: 공시 20260715000123 첨부 2개 — 합병계약서.hwp, 평가의견서.pdf
-  ✓  첨부파일 읽기: 합병계약서.hwp → 51,203자 추출 (첫 줄: 합병계약서)
-
-통과 6 · 건너뜀 0 · 실패 0
-```
-
-단계가 실패해도 멈추지 않고 끝까지 돌기 때문에, 어디까지 되고 어디서 깨지는지가 한 번에 보인다.
-실패가 있으면 자주 보는 원인을 같이 찍어준다. **그 출력을 그대로 붙여넣어 주면 원인을 찾을 수 있다.**
-
-첨부 점검에 쓸 공시를 직접 고르려면:
-
-```bash
-uv run mydart-mcp-selftest --rcept-no 20260715000123
-```
-
-## 사용 예
-
-- "삼성전자 2024년 연결재무제표 보여줘"
-- "카카오 최근 한 달 정기공시 찾아줘"
-- "네이버랑 카카오 2024년 매출·영업이익 비교해줘"
-- "현대차 2024년 최대주주 현황이랑 임원 보수 알려줘" (사업보고서 주요정보)
-- "셀트리온 작년 자기주식 취득 결정 공시 다 찾아줘" (주요사항보고서)
-- "에코프로 5% 이상 대량보유 변동 내역" (지분공시)
-- "포스코홀딩스 2024년 안정성지표 뽑아줘" (재무지표)
-- "이 합병 공시 첨부된 외부평가의견서 읽고 합병비율 근거 정리해줘" (첨부파일)
-
-## 환경변수
+# 환경변수
 
 | 변수 | 설명 |
 |---|---|
@@ -166,14 +428,22 @@ uv run mydart-mcp-selftest --rcept-no 20260715000123
 
 전체 기업 고유번호 목록(약 10만 건)은 처음 한 번 내려받아 캐시하고 7일마다 갱신한다.
 
-## 개발
+**인증키는 Claude 설정 파일에 평문으로 저장된다.** 그 파일을 공유하지 않는다.
+서버는 로그에 키가 찍히지 않도록 `crtfc_key` 값을 가린다 — OpenDART가 인증키를 URL 쿼리로 받고
+httpx가 요청 URL을 통째로 로그에 남기기 때문에 필요한 조치다.
+
+---
+
+# 개발
 
 ```bash
 uv sync --group dev
 uv run pytest
 ```
 
-## 알아둘 점
+---
+
+# 알아둘 점
 
 - 재무제표 API는 2015년 이후 사업연도만 제공한다. 재무지표(`get_financial_indicators`)는 2023년 이후다.
 - `get_financial_statements`의 `fs_div`는 `CFS`(연결) / `OFS`(별도)다. 연결재무제표가 없는 회사는 `OFS`로 조회해야 한다.
@@ -186,3 +456,5 @@ uv run pytest
   OpenDartReader가 쓰는 것과 같다. DART 뷰어 HTML이 바뀌면 깨질 수 있는 부분이다.
 - 거래소공시 등 일부 공시는 뷰어에 문서번호가 없어 첨부 경로 자체가 존재하지 않는다.
   `list_attachments`가 빈 목록과 함께 그 사유를 알려준다.
+- 실제 DART에 대해 검증된 범위는 selftest가 훑는 경로(공시검색·고유번호·재무제표·첨부 목록·PDF 추출)다.
+  나머지 API와 HWP 파서는 아직 실물 응답으로 확인되지 않았다. 오류를 만나면 메시지를 그대로 보고하면 된다.
