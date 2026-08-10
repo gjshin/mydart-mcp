@@ -215,3 +215,26 @@ class _FakeResponse:
 
     def json(self):
         return self._json
+
+
+def test_stdio_is_line_buffered_and_utf8(monkeypatch):
+    """Windows에서 stdout이 블록 버퍼링되면 initialize 응답이 버퍼에 갇혀
+    클라이언트가 60초 뒤 연결을 포기한다. 실제로 겪은 증상이다."""
+    calls = []
+
+    class FakeStream:
+        def reconfigure(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(server.sys, "stdin", FakeStream())
+    monkeypatch.setattr(server.sys, "stdout", FakeStream())
+    server._prepare_stdio()
+
+    assert {"encoding": "utf-8"} in calls
+    assert {"line_buffering": True} in calls
+
+
+def test_prepare_stdio_survives_streams_without_reconfigure(monkeypatch):
+    monkeypatch.setattr(server.sys, "stdin", object())
+    monkeypatch.setattr(server.sys, "stdout", object())
+    server._prepare_stdio()  # 예외 없이 지나가야 한다

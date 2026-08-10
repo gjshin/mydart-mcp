@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -532,8 +533,24 @@ def call_dart_api(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
     return {"endpoint": known.id, "name": known.name, **data}
 
 
+def _prepare_stdio() -> None:
+    """stdout이 파이프에 물리면 파이썬은 블록 버퍼링을 건다. 그러면 initialize 응답이
+    버퍼에 갇혀 클라이언트에 닿지 않고, 클라이언트는 60초를 기다리다 연결을 포기한다.
+    (Windows에서 실제로 이 증상이 났다.)
+
+    기본 인코딩도 문제다. 한국어 Windows는 cp949라 도구 설명의 한글이 깨진다.
+    """
+    for stream in (sys.stdin, sys.stdout):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+    if getattr(sys.stdout, "reconfigure", None) is not None:
+        sys.stdout.reconfigure(line_buffering=True)
+
+
 def main() -> None:
     dart.hide_api_key_in_logs()
+    _prepare_stdio()
     mcp.run()
 
 
