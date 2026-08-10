@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 mydart-mcp = "mydart_mcp.server:main"
+mydart-mcp-selftest = "mydart_mcp.selftest:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
