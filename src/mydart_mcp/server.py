@@ -53,7 +53,17 @@ def search_company(query: str, listed_only: bool = True, limit: int = 10) -> dic
     """
     corps = dart.load_corp_codes()
     matches = dart.search_corp_codes(corps, query, listed_only=listed_only, limit=limit)
-    return {"query": query, "count": len(matches), "companies": matches}
+    result = {"query": query, "count": len(matches), "companies": matches}
+    if not matches and listed_only:
+        # 상장사에 없으면 비상장까지 넓혀서 한 번 더 본다. 안 그러면 호출이 한 번 더 든다.
+        matches = dart.search_corp_codes(corps, query, listed_only=False, limit=limit)
+        if matches:
+            result.update(
+                count=len(matches),
+                companies=matches,
+                note="상장사에 없어 비상장까지 넓혀 찾았습니다. 사업보고서 주요정보는 비어 있을 수 있습니다.",
+            )
+    return result
 
 
 @mcp.tool()
@@ -338,9 +348,12 @@ _PERIODIC_DESC = _with_items(
     """정기보고서(사업·반기·분기보고서)에 실린 항목별 상세 정보를 조회한다.
 지분구조, 임원·직원, 보수, 감사인, 미상환 채권 잔액, 자금 사용내역 등을 다룬다.
 
+여러 해를 한 번에 조회한다. "최근 5년"이면 bsns_years에 5개 연도를 모두 넣어
+한 번만 호출한다 — 연도마다 따로 부르지 않는다.
+
 Args:
     corp_code: DART 고유번호 8자리. search_company로 먼저 찾는다.
-    bsns_year: 사업연도 4자리 (2015년 이후).
+    bsns_years: 사업연도 목록 (2015년 이후). 예: ["2021","2022","2023","2024","2025"]
     item: 아래 항목명 중 하나 (한글명 또는 엔드포인트 id).
     reprt_code: 11011=사업보고서, 11012=반기, 11013=1분기, 11014=3분기.""",
     "periodic_report",
@@ -350,18 +363,50 @@ Args:
 @mcp.tool(description=_PERIODIC_DESC)
 def get_periodic_report_item(
     corp_code: str,
-    bsns_year: str,
+    bsns_years: list[str],
     item: str,
     reprt_code: str = "11011",
 ) -> dict[str, Any]:
+    if not bsns_years:
+        raise dart.DartError("bsns_years가 비어 있습니다.")
     endpoint = catalog.resolve("periodic_report", item)
-    data = dart.get_json(
-        f"{endpoint.id}.json",
-        corp_code=corp_code,
-        bsns_year=bsns_year,
-        reprt_code=dart.normalize_reprt_code(reprt_code),
-    )
-    return _rows(endpoint, data)
+    code = dart.normalize_reprt_code(reprt_code)
+
+    rows: list[dict[str, Any]] = []
+    empty_years: list[str] = []
+    failed_years: dict[str, str] = {}
+    for year in bsns_years:
+        try:
+            data = dart.get_json(
+                f"{endpoint.id}.json", corp_code=corp_code, bsns_year=year, reprt_code=code
+            )
+        except dart.DartError as exc:
+            # 한 해가 실패해도 나머지 연도는 계속 조회한다
+            failed_years[year] = str(exc)
+            continue
+        found = data.get("list", [])
+        if found:
+            rows.extend({"bsns_year": year, **row} for row in found)
+        else:
+            empty_years.append(year)
+
+    result: dict[str, Any] = {
+        "item": endpoint.name,
+        "endpoint": endpoint.id,
+        "count": len(rows),
+        "rows": rows,
+    }
+    if empty_years:
+        result["empty_years"] = empty_years
+    if failed_years:
+        result["failed_years"] = failed_years
+    if not rows and not dart.is_listed(corp_code):
+        result["note"] = (
+            "비상장사입니다. 사업보고서 주요정보는 대개 상장사만 제공되므로 다른 연도를 "
+            "더 조회해도 비어 있을 가능성이 높습니다. list_attachments로 감사보고서 첨부를 "
+            "찾아 읽는 편이 낫습니다."
+        )
+    return result
 
 
 _MAJOR_EVENT_DESC = _with_items(

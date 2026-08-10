@@ -238,3 +238,91 @@ def test_prepare_stdio_survives_streams_without_reconfigure(monkeypatch):
     monkeypatch.setattr(server.sys, "stdin", object())
     monkeypatch.setattr(server.sys, "stdout", object())
     server._prepare_stdio()  # 예외 없이 지나가야 한다
+
+
+def test_corp_codes_are_cached_as_json_not_reparsed(tmp_path, monkeypatch):
+    """원본 XML 파싱은 10만 건에 1.5초쯤 걸린다. 서버가 뜰 때마다 그 값을 치르지
+    않도록 파싱 결과를 JSON으로 저장하고 그쪽을 읽는다."""
+    monkeypatch.setenv("MYDART_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("DART_API_KEY", "test-key")
+    monkeypatch.setattr(dart, "_corp_cache", None)
+
+    downloads = []
+
+    def fake_zip(path, **params):
+        downloads.append(path)
+        return {"CORPCODE.xml": CORP_XML}
+
+    monkeypatch.setattr(dart, "get_zip", fake_zip)
+
+    first = dart.load_corp_codes()
+    assert len(first) == 4
+    assert (tmp_path / "corpcode.json").exists()
+
+    # 메모리 캐시가 비어도 두 번째부터는 다시 내려받지 않고 JSON을 읽는다
+    monkeypatch.setattr(dart, "_corp_cache", None)
+    monkeypatch.setattr(dart, "parse_corp_codes", lambda _: pytest.fail("XML을 다시 파싱했다"))
+    assert dart.load_corp_codes() == first
+    assert downloads == ["corpCode.xml"]
+
+
+def test_is_listed(monkeypatch, corps):
+    monkeypatch.setattr(dart, "load_corp_codes", lambda: corps)
+    assert dart.is_listed("00126380") is True  # 삼성전자, 종목코드 있음
+    assert dart.is_listed("00164779") is False  # 삼성전자서비스, 비상장
+
+
+def test_search_company_falls_back_to_unlisted(monkeypatch, corps):
+    monkeypatch.setattr(dart, "load_corp_codes", lambda: corps)
+    result = server.search_company("삼성전자서비스")
+    assert [c["corp_name"] for c in result["companies"]] == ["삼성전자서비스"]
+    assert "비상장" in result["note"]
+
+
+def test_search_company_has_no_note_when_listed(monkeypatch, corps):
+    monkeypatch.setattr(dart, "load_corp_codes", lambda: corps)
+    assert "note" not in server.search_company("삼성전자")
+
+
+def _periodic_stub(monkeypatch, per_year):
+    def fake(path, **params):
+        value = per_year[params["bsns_year"]]
+        if isinstance(value, Exception):
+            raise value
+        return {"list": value}
+
+    monkeypatch.setattr(dart, "get_json", fake)
+    monkeypatch.setattr(dart, "is_listed", lambda corp_code: True)
+
+
+def test_periodic_report_fetches_every_year_in_one_call(monkeypatch):
+    _periodic_stub(monkeypatch, {"2023": [{"a": 1}], "2024": [{"a": 2}, {"a": 3}], "2025": []})
+    result = server.get_periodic_report_item("00126380", ["2023", "2024", "2025"], "타법인 출자현황")
+
+    assert result["count"] == 3
+    assert [row["bsns_year"] for row in result["rows"]] == ["2023", "2024", "2024"]
+    assert result["empty_years"] == ["2025"]
+    assert "failed_years" not in result
+
+
+def test_periodic_report_keeps_going_when_one_year_fails(monkeypatch):
+    _periodic_stub(monkeypatch, {"2023": dart.DartError("OpenDART 오류 [100]"), "2024": [{"a": 1}]})
+    result = server.get_periodic_report_item("00126380", ["2023", "2024"], "타법인 출자현황")
+
+    assert result["count"] == 1
+    assert "100" in result["failed_years"]["2023"]
+
+
+def test_periodic_report_flags_unlisted_company_when_empty(monkeypatch):
+    _periodic_stub(monkeypatch, {"2024": []})
+    monkeypatch.setattr(dart, "is_listed", lambda corp_code: False)
+    result = server.get_periodic_report_item("00164779", ["2024"], "타법인 출자현황")
+
+    assert result["count"] == 0
+    assert "비상장" in result["note"]
+    assert "감사보고서" in result["note"]
+
+
+def test_periodic_report_rejects_empty_year_list():
+    with pytest.raises(dart.DartError, match="bsns_years"):
+        server.get_periodic_report_item("00126380", [], "타법인 출자현황")
