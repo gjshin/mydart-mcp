@@ -17,9 +17,21 @@
     "entry_point": "src/mydart_mcp/server.py",
     "mcp_config": {
       "command": "uv",
-      "args": ["run", "--no-dev", "--directory", "${__dirname}", "mydart-mcp"],
+      "args": [
+        "run",
+        "--no-project",
+        "--with-requirements",
+        "${__dirname}/requirements.txt",
+        "python",
+        "-m",
+        "mydart_mcp"
+      ],
       "env": {
-        "DART_API_KEY": "${user_config.dart_api_key}"
+        "PYTHONPATH": "${__dirname}/src",
+        "DART_API_KEY": "${user_config.dart_api_key}",
+        "UV_CACHE_DIR": "${__dirname}/.uv-cache",
+        "TMP": "${__dirname}/.uv-tmp",
+        "TEMP": "${__dirname}/.uv-tmp"
       }
     }
   },
@@ -33,11 +45,23 @@
     }
   },
   "compatibility": {
-    "platforms": ["win32", "darwin", "linux"],
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
     "runtimes": {
       "python": ">=3.10"
     }
   },
-  "keywords": ["dart", "opendart", "korea", "disclosure", "finance", "공시", "재무제표"],
+  "keywords": [
+    "dart",
+    "opendart",
+    "korea",
+    "disclosure",
+    "finance",
+    "공시",
+    "재무제표"
+  ],
   "license": "MIT"
 }

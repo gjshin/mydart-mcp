@@ -7,9 +7,10 @@ tests/
 skills/
 install.ps1
 uv.lock
+.uv-cache/
+.uv-tmp/
 api/
 vercel.json
-requirements.txt
 *.mcpb
 __pycache__/
 .pytest_cache/

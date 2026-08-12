@@ -284,6 +284,7 @@ MCP와 별개라 따로 넣어야 한다. `.mcpb`에는 들어 있지 않다.
 |---|---|
 | 커넥터 등록이 "로그인 서비스에 등록할 수 없습니다"로 실패 | 배포가 옛 버전이다. Vercel에서 최신 커밋이 **Ready**인지 확인하고 커넥터를 지웠다 다시 추가한다 |
 | 설정 → 개발자에 `mydart`가 없다 | 거의 항상 **Microsoft Store 버전 Claude**다. 위 「확장 파일」의 주의를 참고 |
+| 설치가 `uv.exe exited with code 1` / `시스템이 지정된 장치나 파일을 열 수 없습니다`로 실패 | 보안 프로그램이 임시 폴더에 실행 파일 만드는 걸 막는 경우다. **최신 `.mcpb`를 다시 받아** 설치해 보면 그 단계를 거치지 않는다. 그래도 안 되면 위 ①(커넥터 주소)을 쓰면 설치 자체가 필요 없다 |
 | `Could not attach to MCP server` | 확장 파일 방식(uv 런타임)이 아직 실험 단계라 Claude Desktop 버전에 따라 안 될 수 있다. **Vercel 방식을 쓰는 게 가장 빠르다.** 굳이 노트북에 깔아야 하면 **Code → Download ZIP** 후 `pyproject.toml`이 보이는 폴더에서 `powershell -ExecutionPolicy Bypass -File .\install.ps1` |
 | `ConnectError` / `ProxyError` | 사내 방화벽이 `opendart.fss.or.kr` 또는 `dart.fss.or.kr`을 막고 있다 |
 | `오류 [020]` / `[010]` | `020`은 일일 20,000건 초과, `010`은 등록되지 않은 인증키 |
