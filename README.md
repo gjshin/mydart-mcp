@@ -61,54 +61,78 @@
 
 # 설치
 
-먼저 [opendart.fss.or.kr](https://opendart.fss.or.kr)에서 **인증키**를 발급받는다. 무료이고 하루 20,000건이다.
+## 시작하기 전에
 
-두 방법이 있고, **둘 다 해두면 어디서든 쓸 수 있다.**
+| | |
+|---|---|
+| **OpenDART 인증키** | [opendart.fss.or.kr](https://opendart.fss.or.kr)에서 무료 발급. 하루 20,000건. **각자 자기 키를 쓴다** |
+| **GitHub 계정** | 이 저장소가 비공개면 접근 권한을 받아야 파일을 받을 수 있다 |
+| **Claude Desktop** | [claude.ai/download](https://claude.ai/download)의 **정식 설치 파일**. 확장 파일로 설치할 때만 필요 |
+
+**관리자 권한은 필요 없다.** 회사 노트북에서도 된다.
+
+## 두 가지 방법
 
 | | 어디서 쓰나 | 시간 |
 |---|---|---|
-| [**① Vercel**](#vercel에-올리기--폰웹-어디서나) | 폰·웹 채팅, 어느 기기든 | 10분 |
-| [**② 확장 파일**](#확장-파일--이-노트북에서) | 이 노트북의 Claude Desktop | 1분 |
+| [**① 확장 파일**](#확장-파일--내-노트북에서-쓰기) | 내 노트북의 Claude Desktop | 1분 |
+| [**② Vercel**](#vercel--폰웹-어디서나-쓰기) | 폰·웹 채팅, 어느 기기든 | 10분 |
 
-## Vercel에 올리기 — 폰·웹 어디서나
+둘은 서로 무관하다. 하나만 해도 되고, **둘 다 해두면 어디서든 쓸 수 있다.**
 
-서버를 인터넷에 띄워 커넥터로 붙인다. **무료 등급으로 된다.**
+---
 
-1. [vercel.com](https://vercel.com) → **Sign Up** → **Continue with GitHub** → 요금제는 **Hobby**(무료)
-2. **Add New… → Project** → 이 저장소를 **Import**
-   - 목록에 없으면 GitHub 접근 권한을 허용하는 화면이 뜬다 → 허용
-   - 환경변수는 **비워 둔다** (인증키는 주소로 준다)
-3. **Deploy** → 3분쯤 기다린다
-4. 나온 주소를 브라우저로 열어 `mydart-mcp is running`이 보이면 성공
-5. [claude.ai](https://claude.ai) → **설정 → 커넥터 → 사용자 지정 커넥터 추가**
+## 확장 파일 — 내 노트북에서 쓰기
 
-```
-https://받은주소.vercel.app/mcp?key=발급받은_인증키
-```
-
-**폰에서는 앱이 아니라 브라우저로** claude.ai에 접속해서 등록해야 한다. 한 번 등록하면 앱에도 따라온다.
-
-이후 코드가 바뀌면 **Vercel이 알아서 다시 배포한다.** 할 일이 없다.
-
-> **주소가 곧 열쇠다.** 인증키가 주소에 들어 있으니 남에게 주지 않는다.
-> 새면 OpenDART에서 재발급하고 커넥터 주소만 바꾸면 된다.
-
-## 확장 파일 — 이 노트북에서
-
-1. 이 저장소에서 **`mydart-mcp.mcpb`** 를 클릭 → 오른쪽 **Download** 버튼으로 받는다
+1. 이 저장소에서 **`mydart-mcp.mcpb`** 파일을 클릭 → 오른쪽 **Download** 버튼으로 받는다
 2. 받은 파일을 **더블클릭**한다
 3. Claude Desktop이 열리며 묻는다 → **Install**
-4. **인증키** 칸에 붙여넣고 저장
+4. **인증키** 칸에 본인 인증키를 붙여넣고 저장
 
 파이썬도 uv도 따로 깔 필요 없다. Claude Desktop이 알아서 준비한다.
-**설정 → 개발자**에 `mydart`가 보이면 성공. 채팅창에 `삼성전자 찾아줘`를 넣어 `00126380`이 나오면 끝이다.
 
-새 버전이 나오면 `.mcpb`를 다시 받아 더블클릭한다. 인증키는 유지된다.
+**확인** — **설정 → 개발자**에 `mydart`가 보이면 성공. 채팅창에 `삼성전자 찾아줘`를 넣어
+`00126380`이 나오면 끝이다.
+
+**업데이트** — 새 `.mcpb`를 다시 받아 더블클릭한다. 인증키는 유지된다.
 
 > **Microsoft Store 버전 Claude면 안 된다.** 설정을 격리된 폴더에서 읽어 아무것도 인식하지 못한다.
-> `Get-AppxPackage *Claude*`에 뭔가 나오면 Store 버전이니
+> PowerShell에서 `Get-AppxPackage *Claude*`에 뭔가 나오면 Store 버전이니
 > `Get-AppxPackage *Claude* | Remove-AppxPackage`로 지우고
 > [claude.ai/download](https://claude.ai/download)에서 정식 설치 파일을 받는다.
+
+---
+
+## Vercel — 폰·웹 어디서나 쓰기
+
+서버를 인터넷에 띄워 커넥터로 붙인다. **각자 자기 것을 띄운다** — 남의 배포를 같이 쓰는 게
+아니라, 자기 GitHub 계정에 저장소를 복사해서 자기 Vercel에 올리는 방식이다.
+**Vercel 무료 등급으로 된다. 카드도 필요 없다.**
+
+1. **Fork** — 이 저장소 오른쪽 위 **Fork** → **Create fork**.
+   내 계정에 똑같은 저장소가 생긴다
+2. [vercel.com](https://vercel.com) → **Sign Up** → **Continue with GitHub** → 요금제는 **Hobby**(무료)
+3. **Add New… → Project** → 방금 Fork한 저장소를 **Import**
+   - 목록에 안 보이면 GitHub 접근을 허용하는 화면이 뜬다 → 허용
+   - 환경변수는 **비워 둔다** (인증키는 주소로 준다)
+4. **Deploy** → 3분쯤 기다린다
+5. 나온 주소를 브라우저로 열어 `mydart-mcp is running`이 보이면 성공
+6. [claude.ai](https://claude.ai) → **설정 → 커넥터 → 사용자 지정 커넥터 추가** →
+   이름은 아무거나, 주소는 아래
+
+```
+https://내가-받은-주소.vercel.app/mcp?key=내_인증키
+```
+
+**폰에서는 앱이 아니라 브라우저로** claude.ai에 접속해 등록해야 한다.
+앱에는 커넥터를 추가하는 화면이 없다. 한 번 등록하면 앱에도 따라온다.
+
+**업데이트** — 원본 저장소가 바뀌면 내 Fork에서 **Sync fork**를 누른다.
+그러면 Vercel이 알아서 다시 배포한다.
+
+> **주소가 곧 열쇠다.** 인증키가 주소에 들어 있으니 그 주소를 남에게 주지 않는다.
+> 새면 OpenDART에서 재발급하고 커넥터 주소만 바꾸면 된다.
+> 서버는 키를 저장하지 않고 요청 때 받은 것을 그 요청 동안만 쓴다.
 
 ---
 
@@ -199,8 +223,15 @@ HWP는 파이썬에 쓸 만한 경량 라이브러리가 없어(`pyhwp`는 AGPL)
 
 ## 설치
 
-MCP와 별개다. `skills\dart-excel-report` 폴더만 압축해서
-[claude.ai](https://claude.ai) → **설정 → Skills** → 업로드하면 모든 기기에 따라온다.
+MCP와 별개라 따로 넣어야 한다. `.mcpb`에는 들어 있지 않다.
+
+1. 이 저장소 → 초록색 **Code** → **Download ZIP** → 압축 해제
+2. 그 안의 **`skills\dart-excel-report` 폴더만** 따로 압축한다
+   (폴더 우클릭 → 압축 → `dart-excel-report.zip`)
+3. [claude.ai](https://claude.ai) → **설정 → Skills** → 그 ZIP을 업로드
+
+계정에 올리는 방식이라 **한 번 올리면 모든 기기에 따라온다.** PC를 바꿔도 그대로다.
+`지금 쓸 수 있는 스킬 목록 보여줘`로 확인할 수 있다.
 
 ---
 
@@ -210,7 +241,7 @@ MCP와 별개다. `skills\dart-excel-report` 폴더만 압축해서
 |---|---|
 | 커넥터 등록이 "로그인 서비스에 등록할 수 없습니다"로 실패 | 배포가 옛 버전이다. Vercel에서 최신 커밋이 **Ready**인지 확인하고 커넥터를 지웠다 다시 추가한다 |
 | 설정 → 개발자에 `mydart`가 없다 | 거의 항상 **Microsoft Store 버전 Claude**다. 위 「확장 파일」의 주의를 참고 |
-| `Could not attach to MCP server` | 확장 파일 방식(uv 런타임)이 아직 실험 단계라 Claude Desktop 버전에 따라 안 될 수 있다. Vercel 방식을 쓰거나, 저장소의 `install.ps1`로 설치한다 |
+| `Could not attach to MCP server` | 확장 파일 방식(uv 런타임)이 아직 실험 단계라 Claude Desktop 버전에 따라 안 될 수 있다. **Vercel 방식을 쓰는 게 가장 빠르다.** 굳이 노트북에 깔아야 하면 **Code → Download ZIP** 후 `pyproject.toml`이 보이는 폴더에서 `powershell -ExecutionPolicy Bypass -File .\install.ps1` |
 | `ConnectError` / `ProxyError` | 사내 방화벽이 `opendart.fss.or.kr` 또는 `dart.fss.or.kr`을 막고 있다 |
 | `오류 [020]` / `[010]` | `020`은 일일 20,000건 초과, `010`은 등록되지 않은 인증키 |
 | 응답이 느리다 | 첫 조회는 기업 목록을 받느라 느리다. 주가를 물으면 DART에 없는 정보라 웹을 뒤진다 |
