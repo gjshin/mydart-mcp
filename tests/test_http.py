@@ -65,6 +65,28 @@ async def test_missing_key_is_rejected(client):
     assert response.json()["error"] == "missing_api_key"
 
 
+async def test_vercel_rewritten_path_still_reaches_mcp(client, monkeypatch):
+    """Vercel은 rewrite를 거치며 경로를 /api/index 로 바꿔 넘긴다."""
+    seen: list[str] = []
+
+    def fake_get_json(path: str, **params):
+        seen.append(dart._api_key())
+        return {"status": "000", "list": []}
+
+    monkeypatch.setattr(dart, "get_json", fake_get_json)
+
+    async with client:
+        await _call(client, "/api/index?key=DDD", INIT)
+        response = await _call(
+            client,
+            "/api/index?key=DDD",
+            _rpc("tools/call", {"name": "get_company_profile", "arguments": {"corp_code": "00126380"}}, 2),
+        )
+
+    assert response.status_code == 200
+    assert seen == ["DDD"]
+
+
 async def test_key_from_query_reaches_the_tool(client, monkeypatch):
     """주소에 붙인 키가 실제 조회에 쓰이는지."""
     seen: list[str] = []

@@ -81,17 +81,17 @@ async def app(scope: Scope, receive: Receive, send: Send) -> None:
     if scope["type"] != "http":
         return
 
-    path = scope.get("path", "")
+    key = _key_from(scope)
 
-    # 배포가 살아 있는지 브라우저로 확인하는 용도. 인증키는 필요 없고 받지도 않는다.
-    if path in ("/", "/health"):
+    # 인증키 없이 들어온 GET은 사람이 브라우저로 열어 본 것이다. 배포가 살아 있는지
+    # 확인해 주고 끝낸다. 커넥터는 언제나 키를 들고 오므로 여기 걸리지 않는다.
+    if not key and scope.get("method", "GET").upper() == "GET":
         await PlainTextResponse(
             "mydart-mcp is running.\n"
-            "커넥터 주소: <이 주소>/mcp?key=발급받은_인증키\n",
+            "커넥터 주소: <이 주소>/mcp?key=발급받은_인증키\n"
         )(scope, receive, send)
         return
 
-    key = _key_from(scope)
     if not key:
         await JSONResponse(
             {
@@ -102,6 +102,10 @@ async def app(scope: Scope, receive: Receive, send: Send) -> None:
             status_code=401,
         )(scope, receive, send)
         return
+
+    # 이 함수 뒤에는 MCP뿐이라 경로가 무엇이든 MCP로 보낸다. Vercel은 rewrite를 거치며
+    # 경로를 `/api/index`로 바꿔 넘기기 때문에, 그대로 두면 `/mcp` 라우트에 걸리지 않는다.
+    scope = {**scope, "path": "/mcp", "raw_path": b"/mcp", "root_path": ""}
 
     dart.use_api_key(key)
     mcp_app = _build_mcp_app()
