@@ -51,11 +51,23 @@ def client():
     return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
-async def test_health_needs_no_key(client):
+async def test_landing_page_needs_no_key(client):
+    """저장소를 볼 수 없는 사람에게는 이 페이지가 유일한 설명서다."""
     async with client:
         response = await client.get("/")
     assert response.status_code == 200
-    assert "mydart-mcp" in response.text
+    assert response.headers["content-type"].startswith("text/html")
+    body = response.text
+    assert "opendart.fss.or.kr" in body            # 키 받는 곳
+    assert "커넥터" in body                          # 붙이는 곳
+    assert "http://test/mcp?key=" in body           # 요청 헤더에서 자기 주소를 만든다
+
+
+async def test_landing_page_uses_the_forwarded_scheme(client):
+    """Vercel 뒤에서는 scope의 scheme이 http라 헤더를 봐야 https가 된다."""
+    async with client:
+        response = await client.get("/", headers={"x-forwarded-proto": "https"})
+    assert "https://test/mcp?key=" in response.text
 
 
 async def test_missing_key_is_rejected(client):

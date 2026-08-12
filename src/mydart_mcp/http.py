@@ -15,10 +15,10 @@ import os
 from typing import Any
 
 from mcp.server.transport_security import TransportSecuritySettings
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.types import Receive, Scope, Send
 
-from . import dart
+from . import dart, landing
 from .server import mcp
 
 # 서버리스(Vercel 등)에서는 홈 디렉터리에 쓸 수 없다. 쓸 수 있는 곳은 /tmp뿐이고,
@@ -90,13 +90,11 @@ async def app(scope: Scope, receive: Receive, send: Send) -> None:
 
     key = _key_from(scope)
 
-    # 인증키 없이 들어온 GET은 사람이 브라우저로 열어 본 것이다. 배포가 살아 있는지
-    # 확인해 주고 끝낸다. 커넥터는 언제나 키를 들고 오므로 여기 걸리지 않는다.
+    # 인증키 없이 들어온 GET은 사람이 브라우저로 열어 본 것이다. 저장소를 볼 수 없는
+    # 사람에게는 이 페이지가 유일한 설명서라, 붙이는 방법을 여기서 전부 알려 준다.
+    # 커넥터는 언제나 키를 들고 오므로 여기 걸리지 않는다.
     if not key and scope.get("method", "GET").upper() == "GET":
-        await PlainTextResponse(
-            "mydart-mcp is running.\n"
-            "커넥터 주소: <이 주소>/mcp?key=발급받은_인증키\n"
-        )(scope, receive, send)
+        await HTMLResponse(landing.page(scope))(scope, receive, send)
         return
 
     if not key:
