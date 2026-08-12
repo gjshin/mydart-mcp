@@ -67,6 +67,19 @@ _OPTION_RE = re.compile(
     r'<option[^>]*\bvalue="[^"]*dcmNo=(\d+)[^"]*"[^>]*>\s*([^<]+?)\s*</option>', re.IGNORECASE
 )
 
+# 드롭다운 항목은 "2026.03.10<nbsp><줄바꿈과 탭 수십 개>연결감사보고서" 꼴로 온다.
+# 그대로 두면 문서 하나마다 공백 문자 수십 개가 응답에 실린다.
+_LEADING_DATE_RE = re.compile(r"^\d{4}[.\-/]\d{2}[.\-/]\d{2}\s*")
+
+
+def clean_label(raw: str) -> str:
+    """드롭다운 항목에서 문서 이름만 남긴다."""
+    text = raw.replace("&nbsp;", " ").replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    stripped = _LEADING_DATE_RE.sub("", text).strip()
+    # 날짜만 있는 항목이면 지우고 나면 빈 문자열이 된다. 그때는 원래 것을 쓴다.
+    return stripped or text
+
 
 def extract_documents(html: str, rcept_no: str) -> list[tuple[str, str]]:
     """공시 하나에 딸린 문서 전부를 (문서번호, 이름)으로 뽑는다.
@@ -87,7 +100,7 @@ def extract_documents(html: str, rcept_no: str) -> list[tuple[str, str]]:
         if dcm_no in seen:
             continue
         seen.add(dcm_no)
-        documents.append((dcm_no, label.strip()))
+        documents.append((dcm_no, clean_label(label)))
     return documents
 
 

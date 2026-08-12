@@ -410,3 +410,36 @@ def test_list_attachments_skips_a_document_that_fails(monkeypatch):
 
     # 하나가 막혀도 나머지는 나온다. 중복 URL은 한 번만.
     assert [a["filename"] for a in listed["attachments"]] == ["남은파일.pdf"]
+
+
+# --- 드롭다운 항목 이름 정리 -------------------------------------------------
+
+
+def test_clean_label_strips_date_and_whitespace():
+    raw = "2026.03.10&nbsp;\r\n\t\t\t\t\t\t\t\t\t\t\t\r\n\t\t\t\t\t\t\t\t\t\t\t\t연결감사보고서"
+    assert attachments.clean_label(raw) == "연결감사보고서"
+
+
+def test_clean_label_keeps_a_plain_name():
+    assert attachments.clean_label("  외부평가기관의 평가의견서  ") == "외부평가기관의 평가의견서"
+
+
+def test_clean_label_keeps_internal_spacing_single():
+    assert attachments.clean_label("감사   보고서") == "감사 보고서"
+
+
+def test_clean_label_falls_back_when_only_a_date():
+    assert attachments.clean_label("2026.03.10") == "2026.03.10"
+
+
+def test_extract_documents_cleans_the_names():
+    html = """
+    <a href="#" onclick="viewDoc('20260310002820','11104488')">본문</a>
+    <select>
+      <option value="/dsaf001/main.do?rcpNo=20260310002820&dcmNo=11104487">
+        2026.03.10&nbsp;\r\n\t\t\t\t\t연결감사보고서
+      </option>
+    </select>
+    """
+    documents = attachments.extract_documents(html, "20260310002820")
+    assert documents == [("11104488", "본문"), ("11104487", "연결감사보고서")]
