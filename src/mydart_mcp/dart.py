@@ -10,6 +10,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 import zipfile
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -52,15 +53,16 @@ class DartError(RuntimeError):
     """OpenDART가 오류 상태를 반환했거나 설정이 잘못된 경우."""
 
 
-_KEY_RE = re.compile(r"(crtfc_key=)[^&\s\"']+")
+# OpenDART로 나가는 crtfc_key와, 원격으로 쓸 때 들어오는 ?key= 둘 다 가린다.
+_KEY_RE = re.compile(r"\b((?:crtfc_key|opendart_key|key)=)[^&\s\"']+")
 
 
 def _redact(value: Any) -> Any:
-    """crtfc_key 값을 가린다. httpx가 str이 아닌 URL 객체를 넘기기도 한다."""
+    """인증키 값을 가린다. httpx가 str이 아닌 URL 객체를 넘기기도 한다."""
     if isinstance(value, str):
         return _KEY_RE.sub(r"\1***", value)
     rendered = str(value)
-    return _KEY_RE.sub(r"\1***", rendered) if "crtfc_key=" in rendered else value
+    return _KEY_RE.sub(r"\1***", rendered) if "key=" in rendered else value
 
 
 class _RedactApiKey(logging.Filter):
@@ -91,12 +93,23 @@ def cache_dir() -> Path:
     return path
 
 
+# 원격(HTTP)으로 띄우면 인증키가 요청마다 다르다. 전역 변수에 담으면 한 사람의 키가
+# 다음 사람 요청에 딸려 나갈 수 있어, 요청 단위로 갈리는 ContextVar에 담는다.
+_request_key: ContextVar[str] = ContextVar("dart_api_key", default="")
+
+
+def use_api_key(key: str) -> None:
+    """이 요청에서 쓸 인증키를 지정한다. HTTP 진입점에서 호출한다."""
+    _request_key.set(key.strip())
+
+
 def _api_key() -> str:
-    key = os.environ.get("DART_API_KEY", "").strip()
+    key = _request_key.get() or os.environ.get("DART_API_KEY", "").strip()
     if not key:
         raise DartError(
-            "DART_API_KEY 환경변수가 없습니다. "
-            "https://opendart.fss.or.kr 에서 인증키를 발급받아 설정하세요."
+            "인증키가 없습니다. "
+            "https://opendart.fss.or.kr 에서 발급받아 DART_API_KEY로 설정하거나, "
+            "원격으로 쓰는 경우 주소 뒤에 ?key=인증키 를 붙이세요."
         )
     return key
 

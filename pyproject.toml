@@ -15,9 +15,10 @@ dependencies = [
 [project.scripts]
 mydart-mcp = "mydart_mcp.server:main"
 mydart-mcp-selftest = "mydart_mcp.selftest:main"
+mydart-mcp-http = "mydart_mcp.http:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "uvicorn>=0.30"]
 
 [build-system]
 requires = ["hatchling"]
