@@ -87,8 +87,21 @@ def hide_api_key_in_logs() -> None:
             logger.addFilter(_RedactApiKey())
 
 
+def _setting(name: str) -> str:
+    """환경변수를 읽되, 치환되지 않은 자리표시자는 값이 없는 것으로 본다.
+
+    확장 파일로 설치할 때 입력칸을 비워 두면 `${user_config.dart_api_key}` 가
+    글자 그대로 넘어온다. 그대로 쓰면 그걸 인증키로 보내고 OpenDART가 돌려주는
+    오류만 보게 되어, 키를 안 넣었다는 사실이 드러나지 않는다.
+    """
+    value = (os.environ.get(name) or "").strip()
+    if value.startswith("${") and value.endswith("}"):
+        return ""
+    return value
+
+
 def cache_dir() -> Path:
-    path = Path(os.environ.get("MYDART_CACHE_DIR") or (Path.home() / ".cache" / "mydart-mcp"))
+    path = Path(_setting("MYDART_CACHE_DIR") or (Path.home() / ".cache" / "mydart-mcp"))
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -104,7 +117,7 @@ def use_api_key(key: str) -> None:
 
 
 def _api_key() -> str:
-    key = _request_key.get() or os.environ.get("DART_API_KEY", "").strip()
+    key = _request_key.get() or _setting("DART_API_KEY")
     if not key:
         raise DartError(
             "인증키가 없습니다. "

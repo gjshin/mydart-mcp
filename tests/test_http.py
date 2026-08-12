@@ -195,3 +195,11 @@ def test_key_is_redacted_from_logs():
 def test_json_is_valid_for_the_error_body():
     body = json.dumps({"error": "missing_api_key"})
     assert json.loads(body)["error"] == "missing_api_key"
+
+
+def test_unsubstituted_placeholder_is_not_a_key(monkeypatch):
+    """확장 파일 설치에서 인증키 칸을 비워 두면 자리표시자가 그대로 넘어온다.
+    그걸 키로 보내면 OpenDART 오류만 보이고 원인이 드러나지 않는다."""
+    monkeypatch.setenv("DART_API_KEY", "${user_config.dart_api_key}")
+    with pytest.raises(dart.DartError, match="인증키가 없습니다"):
+        dart._api_key()
