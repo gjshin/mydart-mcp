@@ -1,0 +1,12 @@
+# .mcpb 번들에 넣지 않을 것들.
+# 번들은 서버가 돌아가는 데 필요한 것만 담는다 — pyproject.toml, src/, README.md.
+.git/
+.github/
+.venv/
+tests/
+skills/
+install.ps1
+uv.lock
+*.mcpb
+__pycache__/
+.pytest_cache/

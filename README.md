@@ -26,7 +26,21 @@ Claude가 상장사 공시·재무제표·첨부파일을 직접 조회해서 �
 | GitHub 로그인 | 이 저장소가 비공개면 로그인해야 코드를 받을 수 있다 |
 | 관리자 권한 | **필요 없다.** 모두 사용자 폴더에 설치된다 (회사 노트북에서도 가능) |
 
-## 스크립트로 (권장 · 5분)
+## 확장 파일로 (가장 쉬움 · 1분)
+
+1. 이 저장소에서 **`mydart-mcp.mcpb`** 를 클릭 → 오른쪽 **Download** 버튼으로 받는다
+2. 받은 파일을 **더블클릭**한다
+3. Claude Desktop이 열리며 설치 여부를 묻는다 → **Install**
+4. **OpenDART 인증키**를 넣는 칸이 나온다 → 붙여넣고 저장
+
+끝입니다. 파이썬도 uv도 따로 깔 필요가 없습니다 — Claude Desktop이 알아서 준비합니다.
+첫 실행에만 몇 초 더 걸리고 그다음부터는 바로 뜹니다.
+
+> **안 될 수도 있습니다.** 이 방식(uv 런타임)은 아직 실험 단계라, Claude Desktop 버전에 따라
+> 설치가 안 되거나 서버가 안 뜰 수 있습니다. 그때는 아래 스크립트 방식으로 하면 됩니다.
+> 자체점검(`mydart-mcp-selftest`)도 스크립트 방식에만 딸려 옵니다.
+
+## 스크립트로 (확장 파일이 안 될 때 · 5분)
 
 1. 이 저장소 → 초록색 **Code** → **Download ZIP** → 압축 해제
 2. **`pyproject.toml`이 바로 보이는 폴더**를 연다 (압축을 풀면 같은 이름 폴더가 한 겹 더 있는 경우가 많다)
@@ -71,8 +85,8 @@ mydart-mcp 자체점검
 
 ## 새 PC로 옮길 때
 
-챙길 것은 **인증키 하나뿐이다.** ZIP은 저장소에서 다시 받으면 되고, 나머지는 스크립트가 한다.
-새 PC에 Claude Desktop을 설치·로그인해 둔 뒤 위 4단계를 그대로 반복하면 된다.
+챙길 것은 **인증키 하나뿐이다.** 파일은 저장소에서 다시 받으면 된다.
+새 PC에 Claude Desktop을 설치·로그인해 둔 뒤 위 순서를 그대로 반복한다.
 
 ---
 
@@ -370,7 +384,10 @@ claude mcp add mydart --env DART_API_KEY=인증키 -- ~/.local/bin/mydart-mcp
 
 # 업데이트
 
-ZIP을 새로 받아 압축을 풀고, **`pyproject.toml`이 보이는 폴더**에서 설치 때와 같은 한 줄:
+**확장 파일로 설치했다면** 새 `.mcpb`를 받아 다시 더블클릭하면 덮어쓴다. 인증키는 유지된다.
+
+**스크립트로 설치했다면** ZIP을 새로 받아 압축을 풀고, **`pyproject.toml`이 보이는 폴더**에서
+설치 때와 같은 한 줄:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -585,6 +602,7 @@ httpx가 요청 URL을 통째로 로그에 남기기 때문에 필요한 조치�
 ```bash
 uv sync --group dev
 uv run pytest
+npx @anthropic-ai/mcpb pack . mydart-mcp.mcpb   # 확장 파일 다시 빌드
 ```
 
 ---
