@@ -1,6 +1,6 @@
 [project]
 name = "mydart-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "OpenDART(전자공시) 기업 공시·재무제표 조회 MCP 서버"
 readme = "README.md"
 requires-python = ">=3.10"

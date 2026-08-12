@@ -284,39 +284,85 @@ def test_search_company_has_no_note_when_listed(monkeypatch, corps):
     assert "note" not in server.search_company("삼성전자")
 
 
-def _periodic_stub(monkeypatch, per_year):
+CORPS = [
+    {"corp_code": "00126380", "corp_name": "삼성전자", "stock_code": "005930"},
+    {"corp_code": "00164779", "corp_name": "SK하이닉스", "stock_code": "000660"},
+]
+
+
+def _periodic_stub(monkeypatch, per_key):
+    """per_key는 "회사코드 연도" 또는 "연도"를 키로 받는다."""
+
     def fake(path, **params):
-        value = per_year[params["bsns_year"]]
+        key = f"{params['corp_code']} {params['bsns_year']}"
+        value = per_key.get(key, per_key.get(params["bsns_year"]))
         if isinstance(value, Exception):
             raise value
         return {"list": value}
 
     monkeypatch.setattr(dart, "get_json", fake)
     monkeypatch.setattr(dart, "is_listed", lambda corp_code: True)
+    monkeypatch.setattr(dart, "load_corp_codes", lambda refresh=False: CORPS)
 
 
 def test_periodic_report_fetches_every_year_in_one_call(monkeypatch):
     _periodic_stub(monkeypatch, {"2023": [{"a": 1}], "2024": [{"a": 2}, {"a": 3}], "2025": []})
-    result = server.get_periodic_report_item("00126380", ["2023", "2024", "2025"], "타법인 출자현황")
+    result = server.get_periodic_report_item(["00126380"], ["2023", "2024", "2025"], "타법인 출자현황")
 
     assert result["count"] == 3
     assert [row["bsns_year"] for row in result["rows"]] == ["2023", "2024", "2024"]
-    assert result["empty_years"] == ["2025"]
-    assert "failed_years" not in result
+    assert result["empty"] == [
+        {"corp_code": "00126380", "corp_name": "삼성전자", "bsns_year": "2025"}
+    ]
+    assert "failed" not in result
 
 
-def test_periodic_report_keeps_going_when_one_year_fails(monkeypatch):
-    _periodic_stub(monkeypatch, {"2023": dart.DartError("OpenDART 오류 [100]"), "2024": [{"a": 1}]})
-    result = server.get_periodic_report_item("00126380", ["2023", "2024"], "타법인 출자현황")
+def test_periodic_report_screens_several_companies(monkeypatch):
+    """후보군을 놓고 훑는 용도. 어느 회사 것인지 행마다 붙어 있어야 표가 된다."""
+    _periodic_stub(
+        monkeypatch,
+        {
+            "00126380 2025": [{"adt_opinion": "적정"}],
+            "00164779 2025": [{"adt_opinion": "한정"}],
+        },
+    )
+    result = server.get_periodic_report_item(
+        ["00126380", "00164779"], ["2025"], "회계감사인의 명칭 및 감사의견"
+    )
+
+    assert result["companies"] == 2
+    assert result["count"] == 2
+    assert [(r["corp_name"], r["adt_opinion"]) for r in result["rows"]] == [
+        ("삼성전자", "적정"),
+        ("SK하이닉스", "한정"),
+    ]
+
+
+def test_periodic_report_keeps_going_when_one_company_fails(monkeypatch):
+    _periodic_stub(
+        monkeypatch,
+        {
+            "00126380 2025": dart.DartError("OpenDART 오류 [100]"),
+            "00164779 2025": [{"a": 1}],
+        },
+    )
+    result = server.get_periodic_report_item(["00126380", "00164779"], ["2025"], "타법인 출자현황")
 
     assert result["count"] == 1
-    assert "100" in result["failed_years"]["2023"]
+    assert "100" in result["failed"]["삼성전자 2025"]
+
+
+def test_periodic_report_refuses_too_many_lookups(monkeypatch):
+    """원격에서는 함수 실행시간 제한이 있어, 끊기고 나서 알기보다 미리 막는다."""
+    _periodic_stub(monkeypatch, {"2025": [{"a": 1}]})
+    with pytest.raises(dart.DartError, match="나눠 부르세요"):
+        server.get_periodic_report_item([f"{i:08d}" for i in range(31)], ["2024", "2025"], "타법인 출자현황")
 
 
 def test_periodic_report_flags_unlisted_company_when_empty(monkeypatch):
     _periodic_stub(monkeypatch, {"2024": []})
     monkeypatch.setattr(dart, "is_listed", lambda corp_code: False)
-    result = server.get_periodic_report_item("00164779", ["2024"], "타법인 출자현황")
+    result = server.get_periodic_report_item(["00164779"], ["2024"], "타법인 출자현황")
 
     assert result["count"] == 0
     # 비상장사도 사업보고서 제출대상이면 데이터가 있다. 없다고 단정하면 안 된다.
@@ -325,6 +371,8 @@ def test_periodic_report_flags_unlisted_company_when_empty(monkeypatch):
     assert "search_disclosures" in result["note"]
 
 
-def test_periodic_report_rejects_empty_year_list():
+def test_periodic_report_rejects_empty_lists():
     with pytest.raises(dart.DartError, match="bsns_years"):
-        server.get_periodic_report_item("00126380", [], "타법인 출자현황")
+        server.get_periodic_report_item(["00126380"], [], "타법인 출자현황")
+    with pytest.raises(dart.DartError, match="corp_codes"):
+        server.get_periodic_report_item([], ["2025"], "타법인 출자현황")

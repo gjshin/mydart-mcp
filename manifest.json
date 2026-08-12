@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "mydart-mcp",
   "display_name": "mydart (DART 공시조회)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenDART 83개 오픈API와 공시 첨부파일(HWP·PDF) 읽기",
   "long_description": "한국 금융감독원 전자공시시스템(DART)의 OpenDART API를 도구로 감싼 서버입니다. 재무제표·지분공시·주요사항보고서 등 83개 오픈API를 모두 다루고, 오픈API에는 없는 공시 첨부파일(감사보고서·외부평가의견서 등 HWP/PDF) 읽기를 함께 제공합니다.",
   "author": {

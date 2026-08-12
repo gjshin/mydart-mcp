@@ -351,11 +351,19 @@ _PERIODIC_DESC = _with_items(
     """정기보고서(사업·반기·분기보고서)에 실린 항목별 상세 정보를 조회한다.
 지분구조, 임원·직원, 보수, 감사인, 미상환 채권 잔액, 자금 사용내역 등을 다룬다.
 
-여러 해를 한 번에 조회한다. "최근 5년"이면 bsns_years에 5개 연도를 모두 넣어
-한 번만 호출한다 — 연도마다 따로 부르지 않는다.
+**여러 회사와 여러 해를 한 번에 조회한다.** "최근 5년"이면 bsns_years에 5개 연도를,
+"이 회사들 중"이면 corp_codes에 전부 넣어 **한 번만** 호출한다 — 회사나 연도마다
+따로 부르지 않는다.
+
+후보군을 놓고 훑는 용도로 쓴다. 예: 피어 20곳의 감사인·감사의견 비교,
+후보군 중 최대주주가 바뀐 곳 찾기, 여러 회사 임원 보수 비교.
+
+전체 상장사를 훑는 용도로는 쓸 수 없다. OpenDART가 회사를 지정해야만 답하기 때문에
+회사 목록을 먼저 알아야 한다.
 
 Args:
-    corp_code: DART 고유번호 8자리. search_company로 먼저 찾는다.
+    corp_codes: DART 고유번호 8자리 목록. search_company로 먼저 찾는다.
+        회사가 하나여도 목록으로 넣는다. 예: ["00126380"]
     bsns_years: 사업연도 목록 (2015년 이후). 예: ["2021","2022","2023","2024","2025"]
     item: 아래 항목명 중 하나 (한글명 또는 엔드포인트 id).
     reprt_code: 11011=사업보고서, 11012=반기, 11013=1분기, 11014=3분기.""",
@@ -363,53 +371,79 @@ Args:
 )
 
 
+# 회사 하나에 연도 하나가 요청 하나다. 원격(서버리스)으로 띄우면 함수 실행시간
+# 제한이 있어, 조회가 길어지면 답을 받기 전에 끊긴다. 끊기고 나서 알기보다
+# 부르기 전에 나눠 달라고 하는 편이 낫다.
+MAX_PERIODIC_LOOKUPS = 60
+
+
 @mcp.tool(description=_PERIODIC_DESC)
 def get_periodic_report_item(
-    corp_code: str,
+    corp_codes: list[str],
     bsns_years: list[str],
     item: str,
     reprt_code: str = "11011",
 ) -> dict[str, Any]:
+    if not corp_codes:
+        raise dart.DartError("corp_codes가 비어 있습니다.")
     if not bsns_years:
         raise dart.DartError("bsns_years가 비어 있습니다.")
+
+    lookups = len(corp_codes) * len(bsns_years)
+    if lookups > MAX_PERIODIC_LOOKUPS:
+        raise dart.DartError(
+            f"회사 {len(corp_codes)}곳 × {len(bsns_years)}개 연도 = {lookups}회 조회는 한 번에 "
+            f"처리하기에 많습니다(상한 {MAX_PERIODIC_LOOKUPS}회). 회사나 연도를 나눠 부르세요."
+        )
+
     endpoint = catalog.resolve("periodic_report", item)
     code = dart.normalize_reprt_code(reprt_code)
+    names = {c["corp_code"]: c["corp_name"] for c in dart.load_corp_codes()}
 
     rows: list[dict[str, Any]] = []
-    empty_years: list[str] = []
-    failed_years: dict[str, str] = {}
-    for year in bsns_years:
-        try:
-            data = dart.get_json(
-                f"{endpoint.id}.json", corp_code=corp_code, bsns_year=year, reprt_code=code
-            )
-        except dart.DartError as exc:
-            # 한 해가 실패해도 나머지 연도는 계속 조회한다
-            failed_years[year] = str(exc)
-            continue
-        found = data.get("list", [])
-        if found:
-            rows.extend({"bsns_year": year, **row} for row in found)
-        else:
-            empty_years.append(year)
+    empty: list[dict[str, str]] = []
+    failed: dict[str, str] = {}
+    for corp_code in corp_codes:
+        name = names.get(corp_code, "")
+        for year in bsns_years:
+            try:
+                data = dart.get_json(
+                    f"{endpoint.id}.json", corp_code=corp_code, bsns_year=year, reprt_code=code
+                )
+            except dart.DartError as exc:
+                # 한 회사·한 해가 실패해도 나머지는 계속 조회한다
+                failed[f"{name or corp_code} {year}"] = str(exc)
+                continue
+            found = data.get("list", [])
+            if found:
+                # 여러 회사를 섞어 돌려주므로 어느 회사 것인지 행마다 붙인다.
+                rows.extend(
+                    {"corp_code": corp_code, "corp_name": name, "bsns_year": year, **row}
+                    for row in found
+                )
+            else:
+                empty.append({"corp_code": corp_code, "corp_name": name, "bsns_year": year})
 
     result: dict[str, Any] = {
         "item": endpoint.name,
         "endpoint": endpoint.id,
+        "companies": len(corp_codes),
         "count": len(rows),
         "rows": rows,
     }
-    if empty_years:
-        result["empty_years"] = empty_years
-    if failed_years:
-        result["failed_years"] = failed_years
-    if not rows and not dart.is_listed(corp_code):
+    if empty:
+        result["empty"] = empty
+    if failed:
+        result["failed"] = failed
+
+    unlisted = [c for c in corp_codes if not dart.is_listed(c)]
+    if unlisted and not rows:
         # 비상장사도 사업보고서 제출대상이면 이 항목들이 나온다. 비었다고 단정하지 말고
         # 이 회사가 실제로 무슨 서류를 내는지 확인하도록 안내한다.
         result["note"] = (
-            "비상장사입니다. 사업보고서 제출대상법인이면 조회되지만, 감사보고서만 제출하는 "
-            "회사면 이 항목이 없습니다. search_disclosures로 이 회사가 어떤 보고서를 내는지 "
-            "확인하고, 감사보고서뿐이라면 list_attachments로 첨부를 읽으세요."
+            f"비상장사가 {len(unlisted)}곳 있습니다. 사업보고서 제출대상법인이면 조회되지만, "
+            "감사보고서만 제출하는 회사면 이 항목이 없습니다. search_disclosures로 어떤 "
+            "보고서를 내는지 확인하고, 감사보고서뿐이라면 list_attachments로 첨부를 읽으세요."
         )
     return result
 
