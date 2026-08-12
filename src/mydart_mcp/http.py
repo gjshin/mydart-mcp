@@ -81,6 +81,13 @@ async def app(scope: Scope, receive: Receive, send: Send) -> None:
     if scope["type"] != "http":
         return
 
+    # 클라이언트는 붙기 전에 OAuth 설정이 있는지 /.well-known/... 을 먼저 물어본다.
+    # 여기에 200으로 아무거나 돌려주면 그것을 로그인 설정으로 읽고 등록을 시도하다
+    # 실패한다. 이 서버는 OAuth를 쓰지 않으므로 없다고 분명히 답해야 한다.
+    if scope.get("path", "").startswith("/.well-known/"):
+        await PlainTextResponse("Not Found", status_code=404)(scope, receive, send)
+        return
+
     key = _key_from(scope)
 
     # 인증키 없이 들어온 GET은 사람이 브라우저로 열어 본 것이다. 배포가 살아 있는지
@@ -93,13 +100,15 @@ async def app(scope: Scope, receive: Receive, send: Send) -> None:
         return
 
     if not key:
+        # 401은 "로그인이 필요하다"는 신호라 클라이언트가 OAuth 절차를 시작한다.
+        # 여기서 모자란 것은 로그인이 아니라 주소에 붙일 인증키다.
         await JSONResponse(
             {
                 "error": "missing_api_key",
                 "message": "주소 뒤에 ?key=발급받은_인증키 를 붙이세요. "
                 "https://opendart.fss.or.kr 에서 무료로 발급받습니다.",
             },
-            status_code=401,
+            status_code=400,
         )(scope, receive, send)
         return
 

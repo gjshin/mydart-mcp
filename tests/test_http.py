@@ -61,8 +61,21 @@ async def test_health_needs_no_key(client):
 async def test_missing_key_is_rejected(client):
     async with client:
         response = await _call(client, "/mcp", INIT)
-    assert response.status_code == 401
+    # 401이면 클라이언트가 OAuth 로그인 절차를 시작한다. 여기서 모자란 건 로그인이 아니다.
+    assert response.status_code == 400
     assert response.json()["error"] == "missing_api_key"
+
+
+async def test_oauth_discovery_is_answered_with_404(client):
+    """OAuth 설정이 있다고 오해하면 커넥터 등록 자체가 실패한다."""
+    async with client:
+        for path in (
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-authorization-server/mcp",
+        ):
+            response = await client.get(path)
+            assert response.status_code == 404, path
 
 
 async def test_vercel_rewritten_path_still_reaches_mcp(client, monkeypatch):

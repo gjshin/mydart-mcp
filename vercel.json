@@ -6,5 +6,8 @@
       "includeFiles": "src/**"
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
+  "rewrites": [
+    { "source": "/", "destination": "/api/index" },
+    { "source": "/mcp", "destination": "/api/index" }
+  ]
 }
