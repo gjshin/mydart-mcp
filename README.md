@@ -369,10 +369,46 @@ Select-String -Path "src\mydart_mcp\server.py" -Pattern "bsns_years" -Quiet   # 
 도구 응답을 그대로 담은 `Raw` 시트를 함께 만들어, 숫자가 의심스러울 때 원본과 대사할
 수 있게 한다.
 
-## 쓰려면
+## 설치
 
-- **Claude Code**: `skills/dart-excel-report/`를 프로젝트의 `.claude/skills/` 아래로 복사
-- **Claude.ai / Desktop**: 스킬 설정에서 이 폴더를 등록
+스킬은 MCP 서버와 별개다. `uv tool install`로는 깔리지 않고 따로 넣어야 한다.
+
+### Claude Desktop / claude.ai — 계정에 등록 (권장)
+
+Desktop은 **계정에 등록한 스킬을 내려받아 쓰는 구조**라, claude.ai에서 올리는 쪽이 확실하다.
+한 번 올리면 회원님의 모든 기기에 따라온다 — 이직해서 PC를 바꿔도 그대로다.
+
+1. ZIP을 푼 폴더에서 `skills\dart-excel-report` 폴더만 따로 **압축**한다
+   (폴더에 우클릭 → 압축 → `dart-excel-report.zip`)
+2. [claude.ai](https://claude.ai) → **설정 → Capabilities/Skills** → 스킬 추가 → 그 ZIP 업로드
+3. Claude Desktop을 껐다 켠다
+
+### Claude Code — 폴더에 복사
+
+```powershell
+$src = "skills\dart-excel-report"
+$dst = "$env:USERPROFILE\.claude\skills\dart-excel-report"
+New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+Copy-Item $src $dst -Recurse -Force
+dir $dst
+```
+
+`SKILL.md`가 보이면 된 것이다. 특정 프로젝트에서만 쓰려면 `$env:USERPROFILE\.claude` 대신
+그 프로젝트의 `.claude` 폴더에 넣는다.
+
+### 확인
+
+```
+지금 쓸 수 있는 스킬 목록 보여줘
+```
+
+`dart-excel-report`가 보이면 설치된 것이다. 그다음:
+
+```
+삼성전자 3개년 재무제표 뽑아서 엑셀로 만들어줘
+```
+
+스킬은 조건이 맞으면 Claude가 알아서 쓴다. 확실히 하려면 **"엑셀로"**를 넣어 말하면 된다.
 
 폰트와 테마 컬러는 중립값이다. 소속 조직의 하우스 스타일이 있으면 `FONT_NAME`과
 `COLORS`만 바꾸면 된다. **글자색 규약은 조직과 무관한 공통 관행이므로 그대로 둔다.**
