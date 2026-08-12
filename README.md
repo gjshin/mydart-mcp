@@ -17,15 +17,69 @@ Claude가 상장사 공시·재무제표·첨부파일을 직접 조회해서 �
 
 # 설치 (Windows + Claude Desktop)
 
-처음 설치하면 30분쯤 걸린다. **순서대로 하고, 각 단계의 확인을 건너뛰지 않는 게 결국 빠르다.**
-
 ## 준비물
 
 | | |
 |---|---|
 | OpenDART 인증키 | [여기서 무료 발급](https://opendart.fss.or.kr/uss/umt/EgovMberInsertView.do) (일 20,000건) |
+| Claude Desktop | [claude.ai/download](https://claude.ai/download)의 **정식 설치 파일**. Microsoft Store 버전은 안 된다 (아래 참고) |
 | GitHub 로그인 | 이 저장소가 비공개면 로그인해야 코드를 받을 수 있다 |
 | 관리자 권한 | **필요 없다.** 모두 사용자 폴더에 설치된다 (회사 노트북에서도 가능) |
+
+## 스크립트로 (권장 · 5분)
+
+1. 이 저장소 → 초록색 **Code** → **Download ZIP** → 압축 해제
+2. **`pyproject.toml`이 바로 보이는 폴더**를 연다 (압축을 풀면 같은 이름 폴더가 한 겹 더 있는 경우가 많다)
+3. 폴더 창의 **주소창을 클릭** → `powershell` 입력 → 엔터
+4. 아래 한 줄을 붙여넣고 엔터:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+인증키를 물어보면 붙여넣는다 (화면에 표시되지 않는다). 미리 주려면:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -ApiKey "발급받은키"
+```
+
+스크립트가 하는 일: Store 버전 Claude 확인 → uv 설치 → 실행 중인 서버 종료 → 프로그램 설치 →
+Claude 설정에 `mydart` 추가(기존 서버는 보존, `.bak` 백업) → **자체점검 실행**.
+
+마지막에 자체점검이 아래처럼 나오면 DART 쪽은 정상이다.
+
+```
+mydart-mcp 자체점검
+
+  ✓  API 키 설정: 40자 설정됨
+  ✓  OpenDART 연결: 최근 7일 공시 3,806건 조회됨
+  ✓  기업 고유번호 조회: 삼성전자 → 00126380
+  ✓  재무제표 조회: 2025년 손익계산서 계정 17개 (통화 KRW)
+  ✓  공시 첨부 목록: 공시 20260807000794 첨부 1개 — ...
+  ✓  첨부파일 읽기: ... → 51,203자 추출
+
+통과 6 · 건너뜀 0 · 실패 0
+```
+
+**6개 다 ✓여야 다음으로 간다.** 실패해도 멈추지 않고 끝까지 돌기 때문에 어디서 깨졌는지 한눈에 보인다.
+
+그다음 Claude Desktop을 실행하고 **설정 → 개발자(Developer)** 에 `mydart`가 보이는지 확인한다.
+채팅창에 `삼성전자 찾아줘`를 넣어 `00126380`이 나오면 끝이다.
+
+> 슬래시(`/`) 메뉴에는 안 나타난다. 그건 프롬프트용이고, MCP **도구**는 Claude가 필요할 때
+> 알아서 호출한다. 설정 → 개발자에 떠 있으면 정상이다.
+
+## 새 PC로 옮길 때
+
+챙길 것은 **인증키 하나뿐이다.** ZIP은 저장소에서 다시 받으면 되고, 나머지는 스크립트가 한다.
+새 PC에 Claude Desktop을 설치·로그인해 둔 뒤 위 4단계를 그대로 반복하면 된다.
+
+---
+
+# 손으로 설치하려면
+
+스크립트가 막히거나, 각 단계에서 무슨 일이 일어나는지 보고 싶을 때. 30분쯤 걸린다.
+**순서대로 하고, 각 단계의 확인을 건너뛰지 않는 게 결국 빠르다.**
 
 ## 0단계 · Microsoft Store 버전 Claude 제거 ⚠️
 
@@ -100,20 +154,28 @@ $key = "여기에_발급받은_인증키"
 이어서 아래 전체를 복사해 붙여넣고 엔터. 1~2분 걸린다.
 
 ```powershell
+Get-Process Claude,mydart-mcp -ErrorAction SilentlyContinue | Stop-Process -Force
 & "$env:USERPROFILE\.local\bin\uv.exe" tool install --force .
 $exe = "$env:USERPROFILE\.local\bin\mydart-mcp.exe"
 $path = "$env:APPDATA\Claude\claude_desktop_config.json"
 if (Test-Path $path) { Copy-Item $path "$path.bak" -Force; $cfg = Get-Content $path -Raw | ConvertFrom-Json } else { New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null; $cfg = [pscustomobject]@{} }
-$cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([ordered]@{ mydart = [ordered]@{ command = $exe; env = [ordered]@{ DART_API_KEY = $key } } }) -Force
+if (-not $cfg.mcpServers) { $cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) -Force }
+$cfg.mcpServers | Add-Member -NotePropertyName mydart -NotePropertyValue ([ordered]@{ command = $exe; env = [ordered]@{ DART_API_KEY = $key } }) -Force
 [System.IO.File]::WriteAllText($path, ($cfg | ConvertTo-Json -Depth 30))
 (Get-Content $path -Raw) -replace '"DART_API_KEY":\s*"[^"]*"','"DART_API_KEY": "***"'
 ```
 
 이 명령이 하는 일:
 
+- 실행 중인 서버를 **먼저 끈다.** 돌고 있으면 실행 파일이 잠겨
+  `failed to remove directory ... 액세스가 거부되었습니다 (os error 5)`가 난다
 - 프로그램을 `mydart-mcp.exe`로 **미리 설치**한다
-- Claude 설정 파일에 `mydart` 항목을 **추가**한다 (기존 설정은 보존, `.bak` 백업 생성)
+- Claude 설정 파일에 `mydart` 항목을 **추가**한다. 이미 `myacc` 같은 다른 서버가
+  등록돼 있으면 **그대로 두고 `mydart`만 얹는다** (`.bak` 백업 생성)
 - 마지막에 결과를 화면에 보여준다 (키는 `***`로 가려짐)
+
+> 마지막 줄에서 키를 가리는 이유: 설정 파일을 그대로 출력하면 인증키가 터미널과
+> 스크롤 기록에 평문으로 남는다.
 
 > **왜 `uvx`가 아니라 `uv tool install`인가**
 > 설정에 `"command": "uvx", "args": ["--from", "폴더", "mydart-mcp"]`를 쓰면, Claude가 켜질 때마다
@@ -128,21 +190,7 @@ mydart-mcp-selftest
 
 인증키는 4단계에서 Claude 설정에 넣었으므로 거기서 읽어온다. 다른 키로 확인하려면
 `$env:DART_API_KEY="키"`를 먼저 실행하면 그쪽이 우선한다.
-
-```
-mydart-mcp 자체점검
-
-  ✓  API 키 설정: 40자 설정됨 (Claude 설정에서 읽음: claude_desktop_config.json)
-  ✓  OpenDART 연결: 최근 7일 공시 3,806건 조회됨
-  ✓  기업 고유번호 조회: 삼성전자 → 00126380
-  ✓  재무제표 조회: 2025년 손익계산서 계정 17개 (통화 KRW)
-  ✓  공시 첨부 목록: 공시 20260807000794 첨부 1개 — ...
-  ✓  첨부파일 읽기: ... → 51,203자 추출
-
-통과 6 · 건너뜀 0 · 실패 0
-```
-
-**6개 다 ✓여야 다음으로 간다.** 실패해도 멈추지 않고 끝까지 돌기 때문에 어디서 깨졌는지 한눈에 보인다.
+출력은 위 "스크립트로"에 실린 것과 같고, **6개 다 ✓여야 다음으로 간다.**
 
 사내망에서 `opendart.fss.or.kr` 또는 `dart.fss.or.kr`이 막혀 있으면 여기서 드러난다
 (`ConnectError` / `ProxyError`). 그 경우 방화벽 예외를 요청해야 한다.
@@ -166,9 +214,6 @@ Get-Process Claude -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
 
 `00126380`이 나오면 끝이다. 처음엔 도구 사용 승인을 물어볼 수 있다 — 허용하면 된다.
-
-> 슬래시(`/`) 메뉴에는 안 나타난다. 그건 프롬프트용이고, MCP **도구**는 Claude가 필요할 때
-> 알아서 호출한다. 설정 → 개발자에 떠 있으면 정상이다.
 
 ---
 
@@ -325,7 +370,15 @@ claude mcp add mydart --env DART_API_KEY=인증키 -- ~/.local/bin/mydart-mcp
 
 # 업데이트
 
-ZIP을 새로 받아 압축을 풀고, **`pyproject.toml`이 보이는 폴더**에서:
+ZIP을 새로 받아 압축을 풀고, **`pyproject.toml`이 보이는 폴더**에서 설치 때와 같은 한 줄:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+**인증키는 다시 묻지 않는다.** 기존 Claude 설정에서 읽어 그대로 쓴다.
+
+손으로 하려면:
 
 ```powershell
 Get-Process Claude,mydart-mcp -ErrorAction SilentlyContinue | Stop-Process -Force
