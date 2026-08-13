@@ -35,6 +35,23 @@ def _with_items(description: str, category: str) -> str:
     return f"{description}\n\n사용 가능한 item ({len(catalog.by_category(category))}개): {catalog.item_names(category)}"
 
 
+# 연도를 안 적어주면 "재무제표는 보통 작년 걸 본다"는 관행대로 한 해를 빼고 부르는 일이
+# 있다. 그러면 조회는 성공하고 숫자도 그럴듯해서, 틀린 해를 봤다는 걸 알기 어렵다.
+_YEAR_RULE = """
+[연도 규칙]
+- 사용자가 말한 연도를 그대로 넣는다. 관행적으로 작년으로 바꾸지 않는다.
+  "2025년 실적"이면 bsns_year는 2025다.
+- 연도를 안 알려줬으면 추측하지 말고 사용자에게 묻는다. 오늘 날짜로 넣지 않는다.
+- 아직 안 나온 보고서면 빈 결과가 돌아온다. 그때 연도를 낮춰 다시 부르고,
+  답할 때 어느 해 자료인지 밝힌다."""
+
+
+def _year_rule(fn):
+    """연도를 받는 도구의 설명 끝에 연도 규칙을 붙인다. @mcp.tool() 아래에 놓는다."""
+    fn.__doc__ = f"{(fn.__doc__ or '').rstrip()}\n{_YEAR_RULE}"
+    return fn
+
+
 def _rows(endpoint: catalog.Endpoint, data: dict[str, Any]) -> dict[str, Any]:
     rows = data.get("list", [])
     return {"item": endpoint.name, "endpoint": endpoint.id, "count": len(rows), "rows": rows}
@@ -254,6 +271,7 @@ def _pick_attachment(
 
 
 @mcp.tool()
+@_year_rule
 def get_financial_statements(
     corp_code: str,
     bsns_year: str,
@@ -302,6 +320,7 @@ def get_financial_statements(
 
 
 @mcp.tool()
+@_year_rule
 def compare_financials(
     corp_codes: list[str],
     bsns_year: str,
@@ -366,7 +385,9 @@ Args:
         회사가 하나여도 목록으로 넣는다. 예: ["00126380"]
     bsns_years: 사업연도 목록 (2015년 이후). 예: ["2021","2022","2023","2024","2025"]
     item: 아래 항목명 중 하나 (한글명 또는 엔드포인트 id).
-    reprt_code: 11011=사업보고서, 11012=반기, 11013=1분기, 11014=3분기.""",
+    reprt_code: 11011=사업보고서, 11012=반기, 11013=1분기, 11014=3분기.
+"""
+    + _YEAR_RULE,
     "periodic_report",
 )
 
@@ -508,6 +529,7 @@ def get_shareholding(corp_code: str, item: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_year_rule
 def get_financial_indicators(
     corp_codes: list[str],
     bsns_year: str,
