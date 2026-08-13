@@ -57,29 +57,85 @@ def _rows(endpoint: catalog.Endpoint, data: dict[str, Any]) -> dict[str, Any]:
     return {"item": endpoint.name, "endpoint": endpoint.id, "count": len(rows), "rows": rows}
 
 
+MAX_QUERIES = 200
+
+
+def _lookup(
+    corps: list[dict[str, str]], query: str, listed_only: bool, limit: int
+) -> tuple[list[dict[str, str]], bool]:
+    """한 건 검색. 상장사에 없으면 비상장까지 넓혀 한 번 더 본다."""
+    matches = dart.search_corp_codes(corps, query, listed_only=listed_only, limit=limit)
+    if matches or not listed_only:
+        return matches, False
+    widened = dart.search_corp_codes(corps, query, listed_only=False, limit=limit)
+    return widened, bool(widened)
+
+
 @mcp.tool()
-def search_company(query: str, listed_only: bool = True, limit: int = 10) -> dict[str, Any]:
+def search_company(
+    query: str | list[str], listed_only: bool = True, limit: int = 10
+) -> dict[str, Any]:
     """회사명이나 6자리 종목코드로 DART 고유번호(corp_code)를 찾는다.
 
     다른 모든 도구는 corp_code를 요구하므로 보통 여기서 시작한다.
 
+    **여러 회사는 목록으로 한 번에 넣는다.** 다른 곳에서 받은 종목코드 목록을
+    corp_code로 바꿔 compare_financials나 get_periodic_report_item에 넘길 때,
+    회사마다 따로 부르지 않는다. 조회는 내려받아 둔 목록에서 하므로 몇 개를 찾든
+    비용이 같고, 나눠 부르면 중간에 빠뜨리기만 쉽다.
+
+    못 찾은 것은 not_found에 남는다 — 목록에서 조용히 사라지지 않는다.
+
     Args:
-        query: 회사명 일부 또는 6자리 종목코드 (예: "삼성전자", "005930")
+        query: 회사명 일부 또는 6자리 종목코드. 하나면 문자열, 여럿이면 목록.
+            예: "삼성전자" 또는 ["005930", "000660", "042700"]
         listed_only: True면 상장사만 검색한다.
-        limit: 최대 결과 수.
+        limit: 검색어 하나당 최대 결과 수.
     """
     corps = dart.load_corp_codes()
-    matches = dart.search_corp_codes(corps, query, listed_only=listed_only, limit=limit)
-    result = {"query": query, "count": len(matches), "companies": matches}
-    if not matches and listed_only:
-        # 상장사에 없으면 비상장까지 넓혀서 한 번 더 본다. 안 그러면 호출이 한 번 더 든다.
-        matches = dart.search_corp_codes(corps, query, listed_only=False, limit=limit)
-        if matches:
-            result.update(
-                count=len(matches),
-                companies=matches,
-                note="상장사에 없어 비상장까지 넓혀 찾았습니다.",
-            )
+
+    if isinstance(query, str):
+        matches, widened = _lookup(corps, query, listed_only, limit)
+        result = {"query": query, "count": len(matches), "companies": matches}
+        if widened:
+            result["note"] = "상장사에 없어 비상장까지 넓혀 찾았습니다."
+        return result
+
+    if not query:
+        raise dart.DartError("query가 비어 있습니다.")
+    if len(query) > MAX_QUERIES:
+        raise dart.DartError(
+            f"한 번에 {MAX_QUERIES}개까지 찾습니다(요청 {len(query)}개). 나눠서 부르세요."
+        )
+
+    companies: list[dict[str, Any]] = []
+    not_found: list[str] = []
+    widened_queries: list[str] = []
+    seen: set[str] = set()
+
+    for one in query:
+        matches, widened = _lookup(corps, one, listed_only, limit)
+        if not matches:
+            not_found.append(one)
+            continue
+        if widened:
+            widened_queries.append(one)
+        for corp in matches:
+            if corp["corp_code"] in seen:
+                continue
+            seen.add(corp["corp_code"])
+            # 회사명으로 찾으면 여러 건이 걸리므로, 어느 검색어에서 나왔는지 붙인다
+            companies.append({"query": one, **corp})
+
+    result: dict[str, Any] = {
+        "queries": len(query),
+        "count": len(companies),
+        "companies": companies,
+    }
+    if not_found:
+        result["not_found"] = not_found
+    if widened_queries:
+        result["note"] = f"상장사에 없어 비상장까지 넓혀 찾았습니다: {', '.join(widened_queries)}"
     return result
 
 
