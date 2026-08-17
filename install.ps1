@@ -1,4 +1,4 @@
-# mydart-mcp 설치 스크립트 (Windows)
+﻿# mydart-mcp 설치 스크립트 (Windows)
 #
 #   1) 이 파일이 있는 폴더에서 주소창에 powershell 입력 → 엔터
 #   2) 아래 한 줄 실행

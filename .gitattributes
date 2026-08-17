@@ -1,0 +1,4 @@
+# 한글 Windows의 PowerShell 5는 BOM 없는 스크립트를 CP949로 읽어 한글이 깨지고,
+# 깨진 글자가 따옴표를 삼키면 구문 오류가 난다. BOM+CRLF를 바이트로 저장한다
+# (사용자는 Download ZIP으로 받으므로 체크아웃 변환은 소용없다).
+*.ps1 -text
